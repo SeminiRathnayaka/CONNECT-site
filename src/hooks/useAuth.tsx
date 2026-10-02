@@ -1,6 +1,5 @@
 import { createContext, useCallback, useContext, useMemo } from 'react';
 import type { ReactNode } from 'react';
-import { mockUser } from '../data/mockHealthData';
 import type { User } from '../types';
 import { useLocalStorage } from './useLocalStorage';
 
@@ -22,17 +21,34 @@ function initialsFrom(name: string): string {
     .join('');
 }
 
+function nameFromEmail(email: string): string {
+  const local = email.split('@')[0] ?? '';
+  const pretty = local
+    .split(/[._\-+]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+  return pretty || 'User';
+}
+
+function buildUser(email: string, name?: string): User {
+  const cleanEmail = email.trim();
+  const finalName = name?.trim() || nameFromEmail(cleanEmail);
+  return {
+    id: `u-${Date.now()}`,
+    name: finalName,
+    email: cleanEmail,
+    initials: initialsFrom(finalName),
+    joinedAt: new Date().toISOString().slice(0, 10),
+  };
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useLocalStorage<User | null>('connect_user', null);
 
   const signIn = useCallback(
     (email: string, name?: string) => {
-      const next: User = {
-        ...mockUser,
-        email: email.trim() || mockUser.email,
-        name: name?.trim() || mockUser.name,
-        initials: initialsFrom(name?.trim() || mockUser.name),
-      };
+      const next = buildUser(email, name);
       setUser(next);
       return next;
     },
@@ -41,13 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signUp = useCallback(
     (name: string, email: string) => {
-      const next: User = {
-        ...mockUser,
-        name: name.trim(),
-        email: email.trim(),
-        initials: initialsFrom(name.trim()),
-        joinedAt: new Date().toISOString().slice(0, 10),
-      };
+      const next = buildUser(email, name);
       setUser(next);
       return next;
     },

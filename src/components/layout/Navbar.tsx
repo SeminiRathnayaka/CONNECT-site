@@ -81,7 +81,7 @@ export function Navbar() {
   const handleSignOut = () => {
     signOut();
     setProfileOpen(false);
-    toast('Signed out. Your demo data stays saved on this device.', 'info');
+    toast('Signed out successfully.', 'info');
     navigate('/');
   };
 

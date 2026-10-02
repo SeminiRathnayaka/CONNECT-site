@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { CalendarDays, NotebookPen, Pencil, Plus, Trash2 } from 'lucide-react';
 import type { Severity, SymptomEntry } from '../../types';
-import { mockSymptoms } from '../../data/mockHealthData';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { useToast } from '../../hooks/useToast';
 import { useNotifications } from '../../hooks/useNotifications';
@@ -25,10 +24,7 @@ const emptyForm = {
 };
 
 export default function SymptomJournal() {
-  const [entries, setEntries] = useLocalStorage<SymptomEntry[]>(
-    'connect_symptoms',
-    mockSymptoms,
-  );
+  const [entries, setEntries] = useLocalStorage<SymptomEntry[]>('connect_symptoms', []);
   const { toast } = useToast();
   const { push } = useNotifications();
 

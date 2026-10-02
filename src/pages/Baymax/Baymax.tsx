@@ -9,29 +9,69 @@ import {
   ShieldAlert,
   Siren,
   Trash2,
+  Unplug,
 } from 'lucide-react';
 import type { ChatConversation, ChatMessage } from '../../types';
-import {
-  baymaxDisclaimer,
-  emergencyLine,
-  getBaymaxReply,
-  isEmergencyLanguage,
-  suggestedQuestions,
-} from '../../data/mockAI';
+import { NOT_CONNECTED_NOTICE, chat, isAiConfigured } from '../../services/ai';
+import type { AiMessage } from '../../services/ai';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { timeNow } from '../../utils/dates';
 import { cn } from '../../utils/cn';
 import { buttonClass } from '../../components/ui/Button';
 import { EmptyState } from '../../components/ui/EmptyState';
-import { EmergencyNotice, MessageBubble } from './MessageBubble';
+import { MessageBubble, EmergencyNotice } from './MessageBubble';
+
+const SYSTEM_PROMPT =
+  'You are Baymax, a friendly and concise health assistant inside the CONNECT app. ' +
+  'Give practical general health information in plain language and keep replies short. ' +
+  'You are not a substitute for professional medical advice, diagnosis or treatment: say so when ' +
+  'relevant and encourage the user to speak with a qualified clinician. Answer in English.';
+
+const DISCLAIMER =
+  'Baymax AI provides general health information for education only. It does not diagnose conditions and does not replace a doctor, pharmacist or emergency service.';
+
+const EMERGENCY_LINE =
+  'If this is an emergency — severe chest pain, trouble breathing, unresponsiveness, heavy bleeding or sudden weakness — contact your local emergency services immediately.';
+
+const SUGGESTED_QUESTIONS = [
+  'I have a headache',
+  'What does a fever mean?',
+  'I feel tired all the time',
+  'How can I improve my sleep?',
+  'My blood pressure is a little high',
+  'How much water should I drink?',
+  'I feel stressed and anxious',
+  'How do I prepare for a doctor visit?',
+];
 
 const WELCOME: ChatMessage = {
   id: 'welcome',
   role: 'assistant',
-  content:
-    "Hello, I'm Baymax — your personal health assistant.\n\nTell me how you're feeling, ask about a symptom, or ask how to prepare for your next appointment. I'll reply in calm, simple steps.",
+  content: "Hi, I'm Baymax. Ask me about your health.",
   timestamp: timeNow(),
 };
+
+const EMERGENCY_KEYWORDS = [
+  'chest pain',
+  "can't breathe",
+  'cannot breathe',
+  'trouble breathing',
+  'unconscious',
+  'unresponsive',
+  'stroke',
+  'overdose',
+  'severe bleeding',
+  'heavy bleeding',
+  'suicide',
+  'suicidal',
+  'seizure',
+  'anaphylaxis',
+];
+
+function isEmergencyLanguage(text: string): boolean {
+  const lower = text.toLowerCase();
+  return EMERGENCY_KEYWORDS.some((k) => lower.includes(k));
+}
 
 function createConversation(index: number): ChatConversation {
   return {
@@ -40,6 +80,10 @@ function createConversation(index: number): ChatConversation {
     messages: [{ ...WELCOME, id: `w-${Date.now()}-${index}`, timestamp: timeNow() }],
     updatedAt: new Date().toISOString(),
   };
+}
+
+function newId(prefix: 'u' | 'a') {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
 export default function Baymax() {
@@ -52,7 +96,7 @@ export default function Baymax() {
   const [typing, setTyping] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const typingTimer = useRef<number | null>(null);
+  const configured = isAiConfigured();
 
   /* Ensure at least one conversation exists */
   useEffect(() => {
@@ -71,20 +115,38 @@ export default function Baymax() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [active?.messages.length, typing]);
 
-  useEffect(() => () => {
-    if (typingTimer.current) window.clearTimeout(typingTimer.current);
-  }, []);
-
   const updateActive = (next: ChatConversation) => {
     setConversations((prev) => prev.map((c) => (c.id === next.id ? next : c)));
   };
 
-  const handleSend = (raw: string) => {
+  const appendAssistant = (conversationId: string, content: string) => {
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id === conversationId
+          ? {
+              ...c,
+              messages: [
+                ...c.messages,
+                {
+                  id: newId('a'),
+                  role: 'assistant' as const,
+                  content,
+                  timestamp: timeNow(),
+                },
+              ],
+              updatedAt: new Date().toISOString(),
+            }
+          : c,
+      ),
+    );
+  };
+
+  const handleSend = async (raw: string) => {
     const text = raw.trim();
     if (!text || !active || typing) return;
 
     const userMsg: ChatMessage = {
-      id: `u-${Date.now()}`,
+      id: newId('u'),
       role: 'user',
       content: text,
       timestamp: timeNow(),
@@ -93,6 +155,8 @@ export default function Baymax() {
     const title =
       active.messages.length <= 1 ? text.slice(0, 34) + (text.length > 34 ? '…' : '') : active.title;
 
+    const history = active.messages;
+
     updateActive({
       ...active,
       title,
@@ -100,25 +164,28 @@ export default function Baymax() {
       updatedAt: new Date().toISOString(),
     });
     setInput('');
-    setTyping(true);
 
-    const delay = 650 + Math.min(text.length * 12, 900);
-    typingTimer.current = window.setTimeout(() => {
-      const reply: ChatMessage = {
-        id: `a-${Date.now()}`,
-        role: 'assistant',
-        content: getBaymaxReply(text),
-        timestamp: timeNow(),
-      };
-      setConversations((prev) =>
-        prev.map((c) =>
-          c.id === active.id
-            ? { ...c, messages: [...c.messages, reply], updatedAt: new Date().toISOString() }
-            : c,
-        ),
-      );
+    if (!configured) {
+      appendAssistant(active.id, NOT_CONNECTED_NOTICE);
+      return;
+    }
+
+    const request: AiMessage[] = [
+      { role: 'system', content: SYSTEM_PROMPT },
+      ...history.map((m) => ({ role: m.role, content: m.content })),
+      { role: 'user', content: text },
+    ];
+
+    setTyping(true);
+    try {
+      const reply = await chat({ messages: request });
+      appendAssistant(active.id, reply);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      appendAssistant(active.id, `Something went wrong: ${message}. Please try again.`);
+    } finally {
       setTyping(false);
-    }, delay);
+    }
   };
 
   const handleNewChat = () => {
@@ -206,7 +273,7 @@ export default function Baymax() {
             <p className="flex items-center gap-1.5 text-xs font-bold text-primary-700">
               <Info className="h-3.5 w-3.5" aria-hidden /> Good to know
             </p>
-            <p className="mt-1.5 text-xs leading-relaxed text-ink-600">{baymaxDisclaimer}</p>
+            <p className="mt-1.5 text-xs leading-relaxed text-ink-600">{DISCLAIMER}</p>
           </div>
 
           <Link
@@ -245,8 +312,16 @@ export default function Baymax() {
             <div className="min-w-0 flex-1">
               <h1 className="truncate text-base font-bold text-ink-900">Baymax AI</h1>
               <p className="flex items-center gap-1.5 text-xs text-ink-500">
-                <span className="h-1.5 w-1.5 rounded-full bg-ok-500" aria-hidden />
-                Personal Health Assistant · online
+                <span
+                  className={cn(
+                    'h-1.5 w-1.5 rounded-full',
+                    configured ? 'bg-ok-500' : 'bg-ink-400',
+                  )}
+                  aria-hidden
+                />
+                {configured
+                  ? 'Personal Health Assistant · online'
+                  : 'Personal Health Assistant · not connected'}
               </p>
             </div>
             <button
@@ -259,24 +334,46 @@ export default function Baymax() {
             </button>
           </header>
 
+          {!configured ? (
+            <div className="border-b border-primary-100 bg-primary-50/70 px-4 py-3 sm:px-5">
+              <div className="flex items-start gap-3 rounded-2xl border border-primary-100 bg-white/80 px-3.5 py-3">
+                <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-primary-100 text-primary-600">
+                  <Unplug className="h-4 w-4" aria-hidden />
+                </span>
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-primary-700">AI model not connected</p>
+                  <p className="mt-1 text-xs leading-relaxed text-ink-600">{NOT_CONNECTED_NOTICE}</p>
+                  <p className="mt-1.5 text-[11px] font-semibold text-primary-600">
+                    (see .env.example)
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           {/* Messages */}
           <div className="flex-1 space-y-5 overflow-y-auto px-4 py-5 sm:px-6">
             <div className="mx-auto flex max-w-xl items-start gap-2 rounded-2xl border border-warn-100 bg-warn-50/80 px-4 py-2.5 text-xs leading-relaxed text-warn-700">
               <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
               <span>
-                <strong className="font-bold">General information only.</strong>{' '}
-                {emergencyLine}
+                <strong className="font-bold">General information only.</strong> {EMERGENCY_LINE}
               </span>
             </div>
 
             {active?.messages.map((m) => (
-              <MessageBubble key={m.id} message={m} />
+              <div key={m.id} className="space-y-2">
+                <MessageBubble message={m} />
+                {m.role === 'user' && isEmergencyLanguage(m.content) ? (
+                  <EmergencyNotice />
+                ) : null}
+              </div>
             ))}
 
-            {active?.messages.some((m) => m.role === 'user') &&
-            isEmergencyLanguage(
-              [...active.messages].reverse().find((m) => m.role === 'user')?.content ?? '',
-            ) ? <EmergencyNotice /> : null}
+            {active && active.messages.length <= 1 && !configured ? (
+              <p className="text-center text-xs text-ink-400">
+                Responses require a connected AI model.
+              </p>
+            ) : null}
 
             {typing ? (
               <div className="flex items-center gap-3">
@@ -305,7 +402,7 @@ export default function Baymax() {
             <div className="border-t border-ink-100/80 bg-white/50 px-4 py-3 sm:px-6">
               <p className="mb-2 text-xs font-semibold text-ink-500">Suggested questions</p>
               <div className="flex flex-wrap gap-2">
-                {suggestedQuestions.map((q) => (
+                {SUGGESTED_QUESTIONS.map((q) => (
                   <button
                     key={q}
                     type="button"

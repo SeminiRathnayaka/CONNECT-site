@@ -5,50 +5,6 @@ import { useLocalStorage } from './useLocalStorage';
 
 const STORAGE_KEY = 'connect_notifications';
 
-const HOUR = 60 * 60 * 1000;
-
-function seedNotifications(): AppNotification[] {
-  const now = Date.now();
-  return [
-    {
-      id: 'n-seed-1',
-      title: 'Report analysis ready',
-      body: 'Your Full Blood Count report has been analyzed by Orayan. Tap to review the results.',
-      type: 'report',
-      link: '/orayan',
-      read: false,
-      createdAt: new Date(now - 2 * HOUR).toISOString(),
-    },
-    {
-      id: 'n-seed-2',
-      title: 'Medication reminder',
-      body: 'Metformin 500 mg — take one tablet with your evening meal.',
-      type: 'medication',
-      link: '/medications',
-      read: false,
-      createdAt: new Date(now - 5 * HOUR).toISOString(),
-    },
-    {
-      id: 'n-seed-3',
-      title: 'Appointment in 4 days',
-      body: 'Dr. N. Fernando · Cardiology · 09:30 at Colombo Heart Centre.',
-      type: 'appointment',
-      link: '/appointments',
-      read: false,
-      createdAt: new Date(now - 26 * HOUR).toISOString(),
-    },
-    {
-      id: 'n-seed-4',
-      title: 'Lab result outside target',
-      body: 'HbA1c 7.1% is above your target range of 4.0–5.6%.',
-      type: 'system',
-      link: '/report-history',
-      read: true,
-      createdAt: new Date(now - 50 * HOUR).toISOString(),
-    },
-  ];
-}
-
 export interface NotificationPushInput {
   title: string;
   body: string;
@@ -70,7 +26,7 @@ const NotificationsContext = createContext<NotificationsContextValue | null>(nul
 export function NotificationsProvider({ children }: { children: ReactNode }) {
   const [notifications, setNotifications] = useLocalStorage<AppNotification[]>(
     STORAGE_KEY,
-    seedNotifications(),
+    [],
   );
 
   const push = useCallback(

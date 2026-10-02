@@ -2,10 +2,10 @@ import { Link, useNavigate } from 'react-router-dom';
 import { ArrowRight, Quote } from 'lucide-react';
 import { SectionHeader } from '../../../components/ui/SectionHeader';
 import { Avatar } from '../../../components/ui/Avatar';
-import { Badge } from '../../../components/ui/Badge';
 import { buttonClass } from '../../../components/ui/Button';
-import { mockTestimonials } from '../../../data/mockHealthData';
 import { useAuth } from '../../../hooks/useAuth';
+
+const placeholderSlots = [0, 1, 2];
 
 export function SocialProof() {
   const { user } = useAuth();
@@ -18,26 +18,25 @@ export function SocialProof() {
           id="testimonials-title"
           eyebrow="Testimonials"
           title="Real Stories, Real Health"
-          subtitle="Feedback from the demo personas used throughout this CONNECT prototype."
-          action={<Badge tone="warn">Demo content — fictional personas</Badge>}
+          subtitle="What people say about CONNECT."
         />
 
         <div className="grid gap-5 md:grid-cols-3">
-          {mockTestimonials.map((t, i) => (
+          {placeholderSlots.map((slot) => (
             <figure
-              key={t.id}
-              className="glass flex h-full flex-col gap-4 rounded-3xl p-6 card-lift animate-fade-up"
-              style={{ animationDelay: `${i * 70}ms` }}
+              key={slot}
+              className="glass flex h-full flex-col gap-4 rounded-3xl border-2 border-dashed border-ink-200 bg-white/50 p-6 animate-fade-up"
+              style={{ animationDelay: `${slot * 70}ms` }}
             >
-              <Quote className="h-6 w-6 text-primary-300" aria-hidden />
-              <blockquote className="text-sm leading-relaxed text-ink-700">
-                “{t.quote}”
+              <Quote className="h-6 w-6 text-ink-300" aria-hidden />
+              <blockquote className="text-sm italic leading-relaxed text-ink-500">
+                Reserved for a customer story.
               </blockquote>
               <figcaption className="mt-auto flex items-center gap-3 border-t border-ink-100 pt-4">
-                <Avatar name={t.name} initials={t.initials} size="sm" />
+                <Avatar name="—" initials="—" size="sm" />
                 <div>
-                  <p className="text-sm font-bold text-ink-900">{t.name}</p>
-                  <p className="text-xs text-ink-500">{t.role}</p>
+                  <p className="text-sm font-bold text-ink-900">To be shared</p>
+                  <p className="text-xs text-ink-500">Coming soon</p>
                 </div>
               </figcaption>
             </figure>

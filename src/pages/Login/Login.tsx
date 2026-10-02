@@ -59,12 +59,6 @@ export default function Login() {
     }, 600);
   };
 
-  const demoLogin = () => {
-    signIn('amara.perera@connect.health');
-    toast('Signed in with the demo account.');
-    navigate('/dashboard');
-  };
-
   /* ----- already signed in ----- */
   if (user) {
     return (
@@ -144,7 +138,7 @@ export default function Login() {
           </div>
 
           <p className="relative text-xs text-white/60">
-            Demo prototype — no real accounts or servers are used.
+            © {new Date().getFullYear()} CONNECT
           </p>
         </div>
 
@@ -192,7 +186,7 @@ export default function Login() {
                   label="Full name"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g. Amara Perera"
+                  placeholder="e.g. Jane Doe"
                   autoComplete="name"
                   icon={<UserIcon className="h-4 w-4" />}
                 />
@@ -243,19 +237,16 @@ export default function Login() {
             </Button>
           </form>
 
-          <div className="my-5 flex items-center gap-3 text-xs text-ink-400">
-            <span className="h-px flex-1 bg-ink-200" />
-            or
-            <span className="h-px flex-1 bg-ink-200" />
-          </div>
-
-          <button type="button" className={buttonClass('secondary', 'md', 'w-full')} onClick={demoLogin}>
-            Continue with demo account
-          </button>
-
           <p className="mt-5 text-center text-xs leading-relaxed text-ink-400">
-            This is a front-end prototype. Accounts are simulated and stored only in your
-            browser's local storage.
+            By continuing, you agree to our{' '}
+            <Link to="/terms" className="font-semibold text-primary-600 hover:underline">
+              Terms
+            </Link>{' '}
+            and{' '}
+            <Link to="/privacy" className="font-semibold text-primary-600 hover:underline">
+              Privacy Policy
+            </Link>
+            .
           </p>
         </div>
       </div>

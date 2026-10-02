@@ -31,7 +31,7 @@ export default function ReportHistory() {
       <PageHeader
         eyebrow="Store & compare"
         title="Report History"
-        description="Every report you have analyzed with Orayan, kept in one place for easy comparison."
+        description="Every report you upload with Orayan, kept in one place for easy comparison."
         icon={<FileClock className="h-6 w-6" aria-hidden />}
         actions={
           <Link to="/orayan" className={buttonClass('primary', 'sm')}>
@@ -44,7 +44,7 @@ export default function ReportHistory() {
       {sorted.length === 0 ? (
         <EmptyState
           title="No reports yet"
-          description="Upload your first medical report and it will be saved here automatically."
+          description="Analyze a medical report with Orayan and it will be saved here automatically."
           action={
             <Link to="/orayan" className={buttonClass('primary', 'sm')}>
               <Plus className="h-4 w-4" aria-hidden />
@@ -66,7 +66,14 @@ export default function ReportHistory() {
                   <span className="grid h-11 w-11 place-items-center rounded-2xl bg-primary-50 text-primary-600">
                     <FileClock className="h-5 w-5" aria-hidden />
                   </span>
-                  <Badge tone="primary">{r.type}</Badge>
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Badge tone="primary">{r.type}</Badge>
+                    {r.results.length > 0 ? (
+                      <Badge tone="aqua">{r.results.length} values</Badge>
+                    ) : (
+                      <Badge tone="neutral">No analysis</Badge>
+                    )}
+                  </div>
                 </div>
 
                 <div>
@@ -76,11 +83,13 @@ export default function ReportHistory() {
                   </p>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 text-center text-xs">
-                  <Cell label="Values" value={String(counts.total)} />
-                  <Cell label="In range" value={String(counts.normal + counts.attention)} tone="text-ok-600" />
-                  <Cell label="Outside" value={String(counts.outside)} tone="text-alert-600" />
-                </div>
+                {r.results.length > 0 ? (
+                  <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                    <Cell label="Values" value={String(counts.total)} />
+                    <Cell label="In range" value={String(counts.normal + counts.attention)} tone="text-ok-600" />
+                    <Cell label="Outside" value={String(counts.outside)} tone="text-alert-600" />
+                  </div>
+                ) : null}
 
                 <div className="mt-auto flex gap-2 border-t border-ink-100 pt-3">
                   <Link

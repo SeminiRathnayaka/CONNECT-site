@@ -29,10 +29,9 @@ interface DropZoneProps {
   file: PickedFile | null;
   onFile: (file: PickedFile) => void;
   onClear: () => void;
-  onSample: () => void;
 }
 
-export function DropZone({ file, onFile, onClear, onSample }: DropZoneProps) {
+export function DropZone({ file, onFile, onClear }: DropZoneProps) {
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -136,13 +135,9 @@ export function DropZone({ file, onFile, onClear, onSample }: DropZoneProps) {
         />
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center justify-center gap-3">
-        <button type="button" className={buttonClass('soft', 'sm')} onClick={onSample}>
-          <Sparkles className="h-4 w-4" aria-hidden />
-          Try a sample report
-        </button>
-        <p className="text-xs text-ink-400">Your file stays on this device — nothing is uploaded.</p>
-      </div>
+      <p className="mt-3 text-center text-xs text-ink-400">
+        Your file stays on this device — only its name and size are shared with the AI model.
+      </p>
 
       {error ? (
         <p
@@ -162,40 +157,26 @@ export function DropZone({ file, onFile, onClear, onSample }: DropZoneProps) {
 /* ------------------------------------------------------------------ */
 
 const steps = [
-  'Reading document…',
-  'Detecting report sections…',
-  'Extracting medical values…',
-  'Matching reference ranges…',
-  'Preparing simple explanations…',
+  'Preparing the request…',
+  'Connecting to the AI model…',
+  'Waiting for the analysis…',
+  'Formatting the explanation…',
 ];
 
 export function AnalysisProgress({
   fileName,
   onCancel,
-  onDone,
 }: {
   fileName: string;
   onCancel: () => void;
-  onDone: () => void;
 }) {
   const [progress, setProgress] = useState(0);
-  const doneRef = useRef(false);
-  const onDoneRef = useRef(onDone);
-  onDoneRef.current = onDone;
 
   useEffect(() => {
     const started = Date.now();
-    const total = 3400;
     const timer = window.setInterval(() => {
-      const pct = Math.min(((Date.now() - started) / total) * 100, 100);
-      setProgress(pct);
-      if (pct >= 100) {
-        window.clearInterval(timer);
-        if (!doneRef.current) {
-          doneRef.current = true;
-          onDoneRef.current();
-        }
-      }
+      const elapsed = (Date.now() - started) / 1000;
+      setProgress(Math.min(8 + elapsed * 28, 92));
     }, 60);
     return () => window.clearInterval(timer);
   }, []);

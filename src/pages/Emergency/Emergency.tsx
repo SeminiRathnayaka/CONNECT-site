@@ -1,10 +1,26 @@
-import { AlertTriangle, HeartPulse, Phone, PhoneCall, Printer, ShieldCheck } from 'lucide-react';
+import { useState } from 'react';
+import {
+  AlertTriangle,
+  HeartPulse,
+  Pencil,
+  Phone,
+  PhoneCall,
+  Plus,
+  Printer,
+  ShieldCheck,
+  Trash2,
+} from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { emergencyInfo, mockEmergencyContacts } from '../../data/mockHealthData';
+import type { EmergencyContact } from '../../types';
+import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { useToast } from '../../hooks/useToast';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { GlassCard } from '../../components/ui/GlassCard';
 import { Badge } from '../../components/ui/Badge';
-import { buttonClass } from '../../components/ui/Button';
+import { Modal } from '../../components/ui/Modal';
+import { EmptyState } from '../../components/ui/EmptyState';
+import { Button, buttonClass } from '../../components/ui/Button';
+import { Input, Textarea } from '../../components/ui/FormControls';
 
 const services = [
   { label: 'Ambulance', number: '1990', note: 'Suwa Seriya emergency ambulance' },
@@ -12,7 +28,104 @@ const services = [
   { label: 'Fire & Rescue', number: '110', note: 'Fire brigade emergency line' },
 ];
 
+const emptyContactForm = { name: '', relation: '', phone: '' };
+
+const emptyInfoForm = {
+  bloodType: '',
+  allergies: '',
+  conditions: '',
+  medications: '',
+  notes: '',
+};
+
+const splitLines = (value: string) =>
+  value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+
 export default function Emergency() {
+  const [contacts, setContacts] = useLocalStorage<EmergencyContact[]>(
+    'connect_emergency_contacts',
+    [],
+  );
+  const [info, setInfo] = useLocalStorage('connect_emergency_info', {
+    bloodType: '',
+    allergies: [] as string[],
+    conditions: [] as string[],
+    medications: [] as string[],
+    notes: [] as string[],
+  });
+  const { toast } = useToast();
+
+  const [contactOpen, setContactOpen] = useState(false);
+  const [contactForm, setContactForm] = useState(emptyContactForm);
+  const [toRemove, setToRemove] = useState<EmergencyContact | null>(null);
+
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [infoForm, setInfoForm] = useState(emptyInfoForm);
+
+  const canSaveContact =
+    contactForm.name.trim() !== '' &&
+    contactForm.relation.trim() !== '' &&
+    contactForm.phone.trim() !== '';
+
+  const openContact = () => {
+    setContactForm(emptyContactForm);
+    setContactOpen(true);
+  };
+
+  const saveContact = () => {
+    if (!canSaveContact) return;
+    const payload: EmergencyContact = {
+      id: `ec-${Date.now()}`,
+      name: contactForm.name.trim(),
+      relation: contactForm.relation.trim(),
+      phone: contactForm.phone.trim(),
+    };
+    setContacts((prev) => [payload, ...prev]);
+    setContactOpen(false);
+    setContactForm(emptyContactForm);
+    toast('Contact added.');
+  };
+
+  const confirmRemove = () => {
+    if (!toRemove) return;
+    setContacts((prev) => prev.filter((c) => c.id !== toRemove.id));
+    setToRemove(null);
+    toast('Contact removed.', 'info');
+  };
+
+  const openInfo = () => {
+    setInfoForm({
+      bloodType: info.bloodType,
+      allergies: info.allergies.join('\n'),
+      conditions: info.conditions.join('\n'),
+      medications: info.medications.join('\n'),
+      notes: info.notes.join('\n'),
+    });
+    setInfoOpen(true);
+  };
+
+  const saveInfo = () => {
+    setInfo({
+      bloodType: infoForm.bloodType.trim(),
+      allergies: splitLines(infoForm.allergies),
+      conditions: splitLines(infoForm.conditions),
+      medications: splitLines(infoForm.medications),
+      notes: splitLines(infoForm.notes),
+    });
+    setInfoOpen(false);
+    toast('Medical information updated.');
+  };
+
+  const addContactButton = (
+    <button type="button" className={buttonClass('primary', 'sm')} onClick={openContact}>
+      <Plus className="h-4 w-4" aria-hidden />
+      Add contact
+    </button>
+  );
+
   return (
     <div className="page-container py-6 sm:py-8">
       <PageHeader
@@ -78,31 +191,53 @@ export default function Emergency() {
         {/* Personal contacts */}
         <section aria-labelledby="contacts-title">
           <GlassCard className="h-full">
-            <h2 id="contacts-title" className="mb-4 text-base font-bold text-ink-900">
-              My emergency contacts
-            </h2>
-            <ul className="space-y-3">
-              {mockEmergencyContacts.map((c) => (
-                <li
-                  key={c.id}
-                  className="flex items-center justify-between gap-3 rounded-2xl border border-ink-100 bg-white/70 px-4 py-3"
-                >
-                  <div>
-                    <p className="text-sm font-bold text-ink-900">{c.name}</p>
-                    <p className="text-xs text-ink-500">{c.relation}</p>
-                    <p className="text-xs font-semibold text-primary-600">{c.phone}</p>
-                  </div>
-                  <a
-                    href={`tel:${c.phone.replace(/\s/g, '')}`}
-                    className={buttonClass('primary', 'sm')}
-                    aria-label={`Call ${c.name}`}
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <h2 id="contacts-title" className="text-base font-bold text-ink-900">
+                My emergency contacts
+              </h2>
+              {addContactButton}
+            </div>
+
+            {contacts.length === 0 ? (
+              <EmptyState
+                title="No emergency contacts yet"
+                description="Add the people you would want called first in an urgent situation."
+                action={addContactButton}
+              />
+            ) : (
+              <ul className="space-y-3">
+                {contacts.map((c) => (
+                  <li
+                    key={c.id}
+                    className="flex items-center justify-between gap-3 rounded-2xl border border-ink-100 bg-white/70 px-4 py-3"
                   >
-                    <Phone className="h-4 w-4" aria-hidden />
-                    Call
-                  </a>
-                </li>
-              ))}
-            </ul>
+                    <div>
+                      <p className="text-sm font-bold text-ink-900">{c.name}</p>
+                      <p className="text-xs text-ink-500">{c.relation}</p>
+                      <p className="text-xs font-semibold text-primary-600">{c.phone}</p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <a
+                        href={`tel:${c.phone.replace(/\s/g, '')}`}
+                        className={buttonClass('primary', 'sm')}
+                        aria-label={`Call ${c.name}`}
+                      >
+                        <Phone className="h-4 w-4" aria-hidden />
+                        Call
+                      </a>
+                      <button
+                        type="button"
+                        className={buttonClass('danger', 'sm')}
+                        onClick={() => setToRemove(c)}
+                        aria-label={`Remove ${c.name}`}
+                      >
+                        <Trash2 className="h-4 w-4" aria-hidden />
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
 
             <Link
               to="/family"
@@ -116,47 +251,28 @@ export default function Emergency() {
         {/* Medical info */}
         <section aria-labelledby="info-title">
           <GlassCard className="h-full">
-            <div className="mb-4 flex items-center justify-between gap-3">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <h2 id="info-title" className="text-base font-bold text-ink-900">
                 Important medical information
               </h2>
-              <Badge tone="alert">Blood {emergencyInfo.bloodType}</Badge>
+              <div className="flex items-center gap-2">
+                {info.bloodType ? <Badge tone="alert">Blood {info.bloodType}</Badge> : null}
+                <button type="button" className={buttonClass('secondary', 'sm')} onClick={openInfo}>
+                  <Pencil className="h-4 w-4" aria-hidden />
+                  Edit
+                </button>
+              </div>
             </div>
 
-            <InfoBlock title="Allergies" tone="alert">
-              <ul className="space-y-1.5">
-                {emergencyInfo.allergies.map((a) => (
-                  <li key={a} className="flex items-start gap-2">
-                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-alert-500" aria-hidden />
-                    {a}
-                  </li>
-                ))}
-              </ul>
-            </InfoBlock>
-
-            <InfoBlock title="Conditions" tone="warn">
-              <ul className="space-y-1.5">
-                {emergencyInfo.conditions.map((c) => (
-                  <li key={c}>• {c}</li>
-                ))}
-              </ul>
-            </InfoBlock>
-
-            <InfoBlock title="Current medications" tone="primary">
-              <ul className="space-y-1.5">
-                {emergencyInfo.medications.map((m) => (
-                  <li key={m}>• {m}</li>
-                ))}
-              </ul>
-            </InfoBlock>
-
-            <InfoBlock title="Emergency notes" tone="aqua">
-              <ul className="space-y-1.5">
-                {emergencyInfo.notes.map((n) => (
-                  <li key={n}>• {n}</li>
-                ))}
-              </ul>
-            </InfoBlock>
+            <InfoList title="Allergies" tone="alert" items={info.allergies} marker="alert" />
+            <InfoList title="Conditions" tone="warn" items={info.conditions} marker="bullet" />
+            <InfoList
+              title="Current medications"
+              tone="primary"
+              items={info.medications}
+              marker="bullet"
+            />
+            <InfoList title="Emergency notes" tone="aqua" items={info.notes} marker="bullet" />
           </GlassCard>
         </section>
       </div>
@@ -167,6 +283,140 @@ export default function Emergency() {
         emergency, contact local emergency services or go to the nearest hospital. This screen is
         for reference only and is not a substitute for professional medical care.
       </p>
+
+      {/* Add contact */}
+      <Modal
+        open={contactOpen}
+        onClose={() => setContactOpen(false)}
+        title="Add emergency contact"
+        description="Saved on this device only."
+        size="sm"
+        footer={
+          <>
+            <button
+              type="button"
+              className={buttonClass('ghost', 'sm')}
+              onClick={() => setContactOpen(false)}
+            >
+              Cancel
+            </button>
+            <Button variant="primary" size="sm" onClick={saveContact} disabled={!canSaveContact}>
+              Add contact
+            </Button>
+          </>
+        }
+      >
+        <div className="grid gap-4">
+          <Input
+            label="Name"
+            required
+            value={contactForm.name}
+            onChange={(e) => setContactForm({ ...contactForm, name: e.target.value })}
+            placeholder="Full name"
+          />
+          <Input
+            label="Relation"
+            required
+            value={contactForm.relation}
+            onChange={(e) => setContactForm({ ...contactForm, relation: e.target.value })}
+            placeholder="e.g. Spouse"
+          />
+          <Input
+            label="Phone"
+            type="tel"
+            required
+            value={contactForm.phone}
+            onChange={(e) => setContactForm({ ...contactForm, phone: e.target.value })}
+            placeholder="e.g. 077 123 4567"
+          />
+        </div>
+      </Modal>
+
+      {/* Remove contact */}
+      <Modal
+        open={toRemove !== null}
+        onClose={() => setToRemove(null)}
+        title="Remove this contact?"
+        size="sm"
+        footer={
+          <>
+            <button
+              type="button"
+              className={buttonClass('ghost', 'sm')}
+              onClick={() => setToRemove(null)}
+            >
+              Keep it
+            </button>
+            <button type="button" className={buttonClass('danger', 'sm')} onClick={confirmRemove}>
+              Remove
+            </button>
+          </>
+        }
+      >
+        <p>
+          <strong>{toRemove?.name}</strong> will be removed from your emergency contacts.
+        </p>
+      </Modal>
+
+      {/* Edit medical information */}
+      <Modal
+        open={infoOpen}
+        onClose={() => setInfoOpen(false)}
+        title="Edit medical information"
+        description="Saved on this device only. Leave anything you have not recorded blank."
+        size="lg"
+        footer={
+          <>
+            <button
+              type="button"
+              className={buttonClass('ghost', 'sm')}
+              onClick={() => setInfoOpen(false)}
+            >
+              Cancel
+            </button>
+            <Button variant="primary" size="sm" onClick={saveInfo}>
+              Save changes
+            </Button>
+          </>
+        }
+      >
+        <div className="grid gap-4">
+          <Input
+            label="Blood type"
+            value={infoForm.bloodType}
+            onChange={(e) => setInfoForm({ ...infoForm, bloodType: e.target.value })}
+            placeholder="e.g. O+"
+          />
+          <Textarea
+            label="Allergies"
+            value={infoForm.allergies}
+            onChange={(e) => setInfoForm({ ...infoForm, allergies: e.target.value })}
+            placeholder="Penicillin"
+            hint="One item per line."
+          />
+          <Textarea
+            label="Conditions"
+            value={infoForm.conditions}
+            onChange={(e) => setInfoForm({ ...infoForm, conditions: e.target.value })}
+            placeholder="Asthma"
+            hint="One item per line."
+          />
+          <Textarea
+            label="Current medications"
+            value={infoForm.medications}
+            onChange={(e) => setInfoForm({ ...infoForm, medications: e.target.value })}
+            placeholder="Salbutamol inhaler"
+            hint="One item per line."
+          />
+          <Textarea
+            label="Emergency notes"
+            value={infoForm.notes}
+            onChange={(e) => setInfoForm({ ...infoForm, notes: e.target.value })}
+            placeholder="Anything a responder should know"
+            hint="One item per line."
+          />
+        </div>
+      </Modal>
     </div>
   );
 }
@@ -192,5 +442,39 @@ function InfoBlock({
       <p className="mb-1.5 text-xs font-bold tracking-wide text-ink-500 uppercase">{title}</p>
       {children}
     </div>
+  );
+}
+
+function InfoList({
+  title,
+  tone,
+  items,
+  marker,
+}: {
+  title: string;
+  tone: keyof typeof toneStyles;
+  items: string[];
+  marker: 'alert' | 'bullet';
+}) {
+  return (
+    <InfoBlock title={title} tone={tone}>
+      {items.length === 0 ? (
+        <p className="text-sm italic text-ink-400">Not recorded yet.</p>
+      ) : (
+        <ul className="space-y-1.5">
+          {items.map((item) => (
+            <li key={item} className="flex items-start gap-2">
+              {marker === 'alert' ? (
+                <AlertTriangle
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0 text-alert-500"
+                  aria-hidden
+                />
+              ) : null}
+              {marker === 'bullet' ? `• ${item}` : item}
+            </li>
+          ))}
+        </ul>
+      )}
+    </InfoBlock>
   );
 }

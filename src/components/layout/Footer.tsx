@@ -101,7 +101,7 @@ export function Footer() {
 
         <div className="mt-10 flex flex-col items-center justify-between gap-4 border-t border-ink-100 pt-6 sm:flex-row">
           <p className="text-xs text-ink-500">
-            © {new Date().getFullYear()} CONNECT Health Technologies · Demo prototype
+            © {new Date().getFullYear()} CONNECT Health Technologies · All rights reserved
           </p>
           <ul className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
             {legalLinks.map((l) => (

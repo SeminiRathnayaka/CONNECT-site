@@ -41,14 +41,14 @@ export interface FamilyMember {
   accent: 'blue' | 'teal' | 'violet' | 'amber' | 'rose';
   conditions: string[];
   allergies: string[];
-  vitals: FamilyVitals;
+  vitals?: FamilyVitals;
   medications: string[];
   upcomingAppointment?: {
     doctor: string;
     date: string;
     time: string;
   };
-  lastCheckup: string;
+  lastCheckup?: string;
   notes?: string;
 }
 

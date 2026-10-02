@@ -1,4 +1,4 @@
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -6,8 +6,10 @@ import {
   CheckCircle2,
   ClipboardList,
   Pill,
+  Trash2,
 } from 'lucide-react';
-import { mockFamily } from '../../data/mockHealthData';
+import { useFamily } from '../../hooks/useFamily';
+import { useToast } from '../../hooks/useToast';
 import { Avatar } from '../../components/ui/Avatar';
 import { Badge } from '../../components/ui/Badge';
 import { GlassCard } from '../../components/ui/GlassCard';
@@ -17,7 +19,18 @@ import { formatDate, relativeDay } from '../../utils/dates';
 
 export default function FamilyMemberPage() {
   const { memberId } = useParams();
-  const member = mockFamily.find((m) => m.id === memberId);
+  const navigate = useNavigate();
+  const { toast } = useToast();
+  const [family, setFamily] = useFamily();
+  const member = family.find((m) => m.id === memberId);
+
+  const removeProfile = () => {
+    if (!member) return;
+    if (!window.confirm(`Remove the profile for ${member.name}?`)) return;
+    setFamily(family.filter((m) => m.id !== member.id));
+    toast('Family profile removed.');
+    navigate('/family');
+  };
 
   if (!member) {
     return (
@@ -55,8 +68,12 @@ export default function FamilyMemberPage() {
             <h1 className="text-xl font-bold text-ink-900 sm:text-2xl">{member.name}</h1>
             <div className="mt-2 flex flex-wrap gap-2">
               <Badge tone="neutral">{member.age} years</Badge>
-              <Badge tone="neutral">Blood {member.bloodType}</Badge>
-              <Badge tone="primary">Last checkup {formatDate(member.lastCheckup)}</Badge>
+              {member.bloodType ? (
+                <Badge tone="neutral">Blood {member.bloodType}</Badge>
+              ) : null}
+              {member.lastCheckup ? (
+                <Badge tone="primary">Last checkup {formatDate(member.lastCheckup)}</Badge>
+              ) : null}
             </div>
           </div>
         </div>
@@ -70,6 +87,10 @@ export default function FamilyMemberPage() {
             <Pill className="h-4 w-4" aria-hidden />
             Medications
           </Link>
+          <button type="button" className={buttonClass('danger', 'sm')} onClick={removeProfile}>
+            <Trash2 className="h-4 w-4" aria-hidden />
+            Remove profile
+          </button>
         </div>
       </div>
 
@@ -78,15 +99,26 @@ export default function FamilyMemberPage() {
         <GlassCard className="lg:col-span-2">
           <h2 className="mb-4 text-sm font-bold text-ink-900">Vitals at a glance</h2>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <BigStat label="Heart rate" value={String(member.vitals.heartRate)} unit="bpm" />
-            <BigStat label="Blood pressure" value={member.vitals.bloodPressure} unit="mmHg" />
-            <BigStat label="Glucose" value={String(member.vitals.glucose)} unit="mg/dL" />
-            <BigStat label="Weight" value={String(member.vitals.weight)} unit="kg" />
-          </div>
-
-          <div className="mt-5 rounded-2xl border border-primary-100 bg-primary-50/60 p-4 text-xs leading-relaxed text-ink-600">
-            Values shown are demo readings for the CONNECT prototype. In a connected product these
-            would sync from home devices or manual entries.
+            <BigStat
+              label="Heart rate"
+              value={member.vitals ? String(member.vitals.heartRate) : '—'}
+              unit="bpm"
+            />
+            <BigStat
+              label="Blood pressure"
+              value={member.vitals?.bloodPressure ?? '—'}
+              unit="mmHg"
+            />
+            <BigStat
+              label="Glucose"
+              value={member.vitals ? String(member.vitals.glucose) : '—'}
+              unit="mg/dL"
+            />
+            <BigStat
+              label="Weight"
+              value={member.vitals ? String(member.vitals.weight) : '—'}
+              unit="kg"
+            />
           </div>
 
           {member.notes ? (
@@ -124,16 +156,20 @@ export default function FamilyMemberPage() {
 
           <GlassCard>
             <h2 className="mb-3 text-sm font-bold text-ink-900">Allergies</h2>
-            <ul className="flex flex-wrap gap-2">
-              {member.allergies.map((a) => (
-                <li key={a}>
-                  <Badge tone={a.toLowerCase().includes('no known') ? 'ok' : 'alert'}>
-                    <AlertTriangle className="h-3 w-3" aria-hidden />
-                    {a}
-                  </Badge>
-                </li>
-              ))}
-            </ul>
+            {member.allergies.length > 0 ? (
+              <ul className="flex flex-wrap gap-2">
+                {member.allergies.map((a) => (
+                  <li key={a}>
+                    <Badge tone={a.toLowerCase().includes('no known') ? 'ok' : 'alert'}>
+                      <AlertTriangle className="h-3 w-3" aria-hidden />
+                      {a}
+                    </Badge>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-ink-500">No known allergies recorded.</p>
+            )}
           </GlassCard>
         </div>
       </div>
@@ -187,7 +223,9 @@ function BigStat({ label, value, unit }: { label: string; value: string; unit: s
       <p className="text-[10px] font-semibold tracking-wide text-ink-400 uppercase">{label}</p>
       <p className="mt-1 text-xl font-extrabold text-ink-900">
         {value}
-        <span className="ml-1 text-[11px] font-medium text-ink-500">{unit}</span>
+        {value === '—' ? null : (
+          <span className="ml-1 text-[11px] font-medium text-ink-500">{unit}</span>
+        )}
       </p>
     </div>
   );

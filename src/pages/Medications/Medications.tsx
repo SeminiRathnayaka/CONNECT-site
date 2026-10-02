@@ -10,7 +10,6 @@ import {
   User,
 } from 'lucide-react';
 import type { Medication } from '../../types';
-import { mockMedications } from '../../data/mockHealthData';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { useToast } from '../../hooks/useToast';
 import { useNotifications } from '../../hooks/useNotifications';
@@ -38,7 +37,7 @@ const emptyForm = {
 type FormState = typeof emptyForm;
 
 export default function Medications() {
-  const [meds, setMeds] = useLocalStorage<Medication[]>('connect_medications', mockMedications);
+  const [meds, setMeds] = useLocalStorage<Medication[]>('connect_medications', []);
   const { toast } = useToast();
   const { push } = useNotifications();
 

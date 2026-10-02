@@ -9,8 +9,7 @@ import {
   Printer,
   Trash2,
 } from 'lucide-react';
-import type { DoctorQuestion } from '../../types';
-import { mockAppointments } from '../../data/mockHealthData';
+import type { Appointment, DoctorQuestion } from '../../types';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { useToast } from '../../hooks/useToast';
 import { PageHeader } from '../../components/ui/PageHeader';
@@ -38,10 +37,11 @@ export default function DoctorPrep() {
     [],
   );
   const [notes, setNotes] = useLocalStorage<string>('connect_doctor_notes', '');
+  const [appointments] = useLocalStorage<Appointment[]>('connect_appointments', []);
   const [draft, setDraft] = useState('');
   const { toast } = useToast();
 
-  const nextVisit = mockAppointments
+  const nextVisit = appointments
     .filter((a) => a.status === 'upcoming')
     .sort((a, b) => a.date.localeCompare(b.date))[0];
 

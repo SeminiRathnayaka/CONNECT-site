@@ -15,7 +15,7 @@ const cards = [
     icon: LockKeyhole,
     title: 'Secure Health Hub',
     description:
-      'Reports, lab results, vaccinations and medical history organized in one place — stored privately on your own device for this prototype.',
+      'Reports, lab results, vaccinations and medical history organized in one place — stored privately on your own device.',
     accent: 'text-aqua-600 bg-aqua-50',
     to: '/health-records',
   },

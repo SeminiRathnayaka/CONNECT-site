@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 /**
- * State that synchronises with localStorage so the prototype
+ * State that synchronises with localStorage so data
  * survives page refreshes.
  */
 export function useLocalStorage<T>(key: string, initialValue: T) {

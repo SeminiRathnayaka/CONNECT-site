@@ -1,5 +1,7 @@
 # CONNECT — Complete Content Inventory
 
+> **STATUS: STALE.** This inventory documents the earlier demo version of the app. All mock/fictional data, demo copy, and scripted AI replies have since been removed — the app now ships with empty states, working forms, and an AI integration stub (`src/services/ai.ts`). Treat this file as historical reference only.
+
 Every user-visible text string in the app: headings, paragraphs, buttons, labels, toasts, empty states, mock data, AI replies, glossary, articles, and accessibility labels.
 
 ---

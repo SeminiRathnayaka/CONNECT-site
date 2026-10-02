@@ -1,15 +1,12 @@
 import { Link } from 'react-router-dom';
 import {
   ArrowRight,
-  Bot,
   CalendarClock,
   CheckCircle2,
-  CircleAlert,
   Clock,
   FileText,
   MapPin,
   Pill,
-  ScanLine,
   Siren,
 } from 'lucide-react';
 import type { Appointment, MedicalReport, Medication } from '../../types';
@@ -17,8 +14,9 @@ import { Avatar } from '../../components/ui/Avatar';
 import { Badge } from '../../components/ui/Badge';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { buttonClass } from '../../components/ui/Button';
+import { useFamily } from '../../hooks/useFamily';
+import { isAiConfigured, NOT_CONNECTED_NOTICE } from '../../services/ai';
 import { formatDate, relativeDay } from '../../utils/dates';
-import { mockFamily } from '../../data/mockHealthData';
 
 /* ------------------------------------------------------------------ */
 /* Recent reports                                                      */
@@ -44,7 +42,11 @@ export function RecentReports({ reports }: { reports: MedicalReport[] }) {
                 {formatDate(r.date)} · {r.lab}
               </span>
             </span>
-            <Badge tone="primary">{r.results.length} values</Badge>
+            {r.results.length > 0 ? (
+              <Badge tone="primary">{r.results.length} values</Badge>
+            ) : (
+              <Badge tone="neutral">No analysis</Badge>
+            )}
           </Link>
         </li>
       ))}
@@ -101,6 +103,15 @@ export function UpcomingAppointments({ appointments }: { appointments: Appointme
 /* Medications                                                         */
 /* ------------------------------------------------------------------ */
 export function CurrentMedications({ medications }: { medications: Medication[] }) {
+  if (medications.length === 0) {
+    return (
+      <EmptyState
+        title="No medications yet"
+        description="Add a medication to see today's schedule here."
+      />
+    );
+  }
+
   return (
     <ul className="space-y-2.5">
       {medications.slice(0, 4).map((m) => (
@@ -139,62 +150,22 @@ export function CurrentMedications({ medications }: { medications: Medication[] 
 /* ------------------------------------------------------------------ */
 /* AI insights                                                         */
 /* ------------------------------------------------------------------ */
-const insights = [
-  {
-    icon: ScanLine,
-    tone: 'text-primary-600 bg-primary-50',
-    title: 'Glucose trending upward',
-    body: 'Your last 3 readings moved above your usual range. Orayan flagged the same value in your March report.',
-    cta: 'Review in Orayan',
-    to: '/orayan',
-  },
-  {
-    icon: Bot,
-    tone: 'text-aqua-600 bg-aqua-50',
-    title: 'Sleep is improving',
-    body: 'You gained 22 minutes of average sleep this week. A consistent wake-up time is the biggest driver.',
-    cta: 'Ask Baymax for tips',
-    to: '/baymax',
-  },
-  {
-    icon: CircleAlert,
-    tone: 'text-warn-600 bg-warn-50',
-    title: 'Vitamin D below range',
-    body: 'Your March blood work showed 21 ng/mL against a 30–100 reference. Worth discussing at your next visit.',
-    cta: 'Prepare questions',
-    to: '/doctor-prep',
-  },
-];
-
 export function AiInsights() {
+  const configured = isAiConfigured();
+
   return (
-    <ul className="space-y-3">
-      {insights.map((i) => {
-        const Icon = i.icon;
-        return (
-          <li key={i.title}>
-            <Link
-              to={i.to}
-              className="group flex gap-3 rounded-2xl border border-ink-100 bg-white/70 p-3.5 transition hover:border-primary-200 hover:bg-white"
-            >
-              <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${i.tone}`}>
-                <Icon className="h-4 w-4" aria-hidden />
-              </span>
-              <span className="min-w-0">
-                <span className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-bold text-ink-900">{i.title}</span>
-                  <ArrowRight className="h-3.5 w-3.5 shrink-0 text-ink-300 transition group-hover:translate-x-0.5 group-hover:text-primary-600" />
-                </span>
-                <span className="mt-1 block text-xs leading-relaxed text-ink-500">{i.body}</span>
-                <span className="mt-1.5 block text-[11px] font-bold text-primary-600">
-                  {i.cta}
-                </span>
-              </span>
-            </Link>
-          </li>
-        );
-      })}
-    </ul>
+    <EmptyState
+      title={configured ? 'No insights yet' : 'AI insights'}
+      description={configured
+        ? 'Insights will appear once your model analyzes your data.'
+        : NOT_CONNECTED_NOTICE}
+      action={
+        <Link to="/baymax" className={buttonClass('soft', 'sm')}>
+          Ask Baymax
+          <ArrowRight className="h-4 w-4" aria-hidden />
+        </Link>
+      }
+    />
   );
 }
 
@@ -202,30 +173,44 @@ export function AiInsights() {
 /* Family overview                                                     */
 /* ------------------------------------------------------------------ */
 export function FamilyOverview() {
-  const members = mockFamily.slice(1, 5);
+  const [family] = useFamily();
+  const members = family.slice(0, 4);
+
   return (
     <div className="flex flex-col gap-4">
-      <ul className="space-y-2.5">
-        {members.map((m) => (
-          <li key={m.id}>
-            <Link
-              to={`/family/${m.id}`}
-              className="flex items-center gap-3 rounded-2xl border border-ink-100 bg-white/70 px-3.5 py-2.5 transition hover:border-primary-200 hover:bg-white"
-            >
-              <Avatar name={m.name} initials={m.initials} accent={m.accent} size="sm" />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-semibold text-ink-800">
-                  {m.name}
-                </span>
-                <span className="block text-xs text-ink-500">
-                  {m.relationship} · BP {m.vitals.bloodPressure}
-                </span>
-              </span>
-              <span className="text-xs font-bold text-primary-600">View</span>
+      {family.length === 0 ? (
+        <EmptyState
+          title="No family profiles yet"
+          description="Add family profiles to see everyone you care for at a glance."
+          action={
+            <Link to="/family" className={buttonClass('primary', 'sm')}>
+              Add a family profile
             </Link>
-          </li>
-        ))}
-      </ul>
+          }
+        />
+      ) : (
+        <ul className="space-y-2.5">
+          {members.map((m) => (
+            <li key={m.id}>
+              <Link
+                to={`/family/${m.id}`}
+                className="flex items-center gap-3 rounded-2xl border border-ink-100 bg-white/70 px-3.5 py-2.5 transition hover:border-primary-200 hover:bg-white"
+              >
+                <Avatar name={m.name} initials={m.initials} accent={m.accent} size="sm" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold text-ink-800">
+                    {m.name}
+                  </span>
+                  <span className="block text-xs text-ink-500">
+                    {m.relationship} · BP {m.vitals?.bloodPressure ?? '—'}
+                  </span>
+                </span>
+                <span className="text-xs font-bold text-primary-600">View</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
 
       <Link
         to="/emergency"

@@ -11,7 +11,6 @@ import {
   XCircle,
 } from 'lucide-react';
 import type { Appointment } from '../../types';
-import { mockAppointments } from '../../data/mockHealthData';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { useToast } from '../../hooks/useToast';
 import { useNotifications } from '../../hooks/useNotifications';
@@ -37,10 +36,7 @@ const emptyForm = {
 };
 
 export default function Appointments() {
-  const [items, setItems] = useLocalStorage<Appointment[]>(
-    'connect_appointments',
-    mockAppointments,
-  );
+  const [items, setItems] = useLocalStorage<Appointment[]>('connect_appointments', []);
   const { toast } = useToast();
   const { push } = useNotifications();
 

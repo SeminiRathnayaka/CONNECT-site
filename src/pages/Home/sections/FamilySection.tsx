@@ -9,11 +9,10 @@ import {
   SmartImage,
 } from '../../../components/images/Placeholders';
 import familyProfilesImg from '../../../assets/images/family-profiles.jpg';
-import { mockFamily } from '../../../data/mockHealthData';
+
+const placeholderSlots = [0, 1, 2, 3];
 
 export function FamilySection() {
-  const members = mockFamily.slice(1, 5);
-
   return (
     <section className="page-container py-14 sm:py-16" aria-labelledby="family-section">
       <SectionHeader
@@ -65,37 +64,34 @@ export function FamilySection() {
         </div>
 
         <div className="grid gap-3.5 sm:grid-cols-2">
-          {members.map((m) => (
-            <Link
-              key={m.id}
-              to={`/family/${m.id}`}
-              className="glass group flex flex-col gap-4 rounded-3xl p-5 card-lift"
+          {placeholderSlots.map((slot) => (
+            <div
+              key={slot}
+              className="glass flex flex-col gap-4 rounded-3xl border border-dashed border-ink-200 p-5"
             >
               <div className="flex items-center gap-3">
-                <Avatar name={m.name} initials={m.initials} accent={m.accent} size="lg" />
+                <Avatar name="?" accent="blue" size="lg" className="opacity-70" />
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-bold text-ink-900">{m.name}</p>
-                  <p className="text-xs text-ink-500">
-                    {m.relationship} · {m.age} yrs
-                  </p>
+                  <p className="truncate text-sm font-bold text-ink-400">Family member</p>
+                  <p className="text-xs text-ink-300">Profile placeholder</p>
                 </div>
               </div>
 
               <dl className="grid grid-cols-2 gap-2 text-xs">
-                <div className="rounded-xl bg-white/70 px-3 py-2">
+                <div className="rounded-xl border border-dashed border-ink-200 bg-white/50 px-3 py-2">
                   <dt className="text-ink-400">Heart rate</dt>
-                  <dd className="font-bold text-ink-800">{m.vitals.heartRate} bpm</dd>
+                  <dd className="font-bold text-ink-400">—</dd>
                 </div>
-                <div className="rounded-xl bg-white/70 px-3 py-2">
+                <div className="rounded-xl border border-dashed border-ink-200 bg-white/50 px-3 py-2">
                   <dt className="text-ink-400">Blood pressure</dt>
-                  <dd className="font-bold text-ink-800">{m.vitals.bloodPressure}</dd>
+                  <dd className="font-bold text-ink-400">—</dd>
                 </div>
               </dl>
 
-              <p className="mt-auto text-xs font-semibold text-primary-600 opacity-0 transition group-hover:opacity-100">
-                View health overview →
+              <p className="mt-auto text-xs font-semibold text-ink-300">
+                Reserved for a profile you add
               </p>
-            </Link>
+            </div>
           ))}
         </div>
       </div>

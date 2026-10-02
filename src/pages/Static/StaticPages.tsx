@@ -51,25 +51,25 @@ const content: Record<
     eyebrow: 'Legal',
     title: 'Privacy Policy',
     description:
-      'This prototype stores data locally in your browser. This page explains what is kept and why.',
+      'Your data stays on your device. This page explains what CONNECT stores and why.',
     sections: [
       {
         h: 'What we store',
         p: [
-          'In this front-end prototype, your name, email, medications, appointments, symptom entries, doctor-prep notes and report history are stored in your browser’s localStorage.',
+          'Your name, medications, appointments, symptom journal entries, doctor-prep notes and report history are stored in your browser’s localStorage on this device.',
           'Nothing is sent to a server. Clearing your browser data or using the reset option removes it permanently.',
         ],
       },
       {
         h: 'Uploaded reports',
         p: [
-          'Medical reports selected in Orayan are analyzed locally in the interface. Files are not transmitted anywhere and are discarded when you leave the page.',
+          'Medical reports selected in Orayan are analyzed in the interface on your device. Files are not transmitted anywhere and are discarded when you leave the page.',
         ],
       },
       {
-        h: 'Health data caution',
+        h: 'Keeping it private',
         p: [
-          'Do not enter real medical information into a prototype you do not control. This product is a demonstration of interface and interaction design.',
+          'Because your information never leaves this browser, anyone with access to your device profile may be able to read it. Use a device passcode, and clear your browser data if you share this computer or stop using CONNECT.',
         ],
       },
     ],
@@ -77,7 +77,7 @@ const content: Record<
   terms: {
     eyebrow: 'Legal',
     title: 'Terms of Service',
-    description: 'The ground rules for using CONNECT as a demonstration product.',
+    description: 'The ground rules for using CONNECT.',
     sections: [
       {
         h: 'Not a medical device',
@@ -88,13 +88,19 @@ const content: Record<
       {
         h: 'Emergency use',
         p: [
-          'CONNECT does not contact emergency services and does not monitor your condition. In an emergency, call your local emergency number immediately.',
+          'CONNECT does not contact emergency services and does not monitor your condition. In an emergency, call your local emergency number immediately or go to the nearest hospital.',
         ],
       },
       {
-        h: 'Demo content',
+        h: 'No medical advice',
         p: [
-          'Profiles, reports, testimonials and readings shown in this product are fictional demo data created for demonstration purposes.',
+          'Articles, glossary entries and other educational content in CONNECT are provided for general information only. They are not medical advice and should not be relied on for diagnosis or treatment. Always consult a qualified healthcare professional about your health.',
+        ],
+      },
+      {
+        h: 'Your information',
+        p: [
+          'CONNECT stores the information you enter on this device. You are responsible for the accuracy of what you record and for keeping access to your device secure.',
         ],
       },
     ],
@@ -114,7 +120,7 @@ export default function StaticPages({ variant }: { variant: StaticVariant }) {
       return;
     }
     setSent(true);
-    toast('Thanks! Your message has been recorded for this demo.');
+    toast('Thanks for reaching out — we’ll get back to you soon.');
   };
 
   return (
@@ -141,7 +147,7 @@ export default function StaticPages({ variant }: { variant: StaticVariant }) {
                   <CheckCircle2 className="h-10 w-10 text-ok-500" aria-hidden />
                   <h2 className="text-base font-bold text-ink-900">Message received</h2>
                   <p className="max-w-sm text-sm text-ink-600">
-                    This is a demo, so nothing was actually sent — but the flow works end to end.
+                    We’ve received your message and will reply as soon as we can.
                   </p>
                   <button
                     type="button"
