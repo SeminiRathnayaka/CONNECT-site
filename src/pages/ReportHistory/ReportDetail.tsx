@@ -1,20 +1,23 @@
-﻿import { useState } from 'react';
+﻿import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
   Calendar,
   FlaskConical,
-  Languages,
   Printer,
   ScanLine,
   User,
 } from 'lucide-react';
-import { glossary } from '../../data/glossary';
-import { useReports } from '../../hooks/useReports';
+import { ApiError, explainTest, getReport, getReportSummary } from '../../lib/api';
+import type { Language } from '../../lib/api';
+import { toLabResult } from '../../lib/api';
+import type { LabResult } from '../../types';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { GlassCard } from '../../components/ui/GlassCard';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { LoadingState } from '../../components/ui/LoadingState';
 import { buttonClass } from '../../components/ui/Button';
+import { LanguageToggle } from '../../components/ui/LanguageToggle';
 import { ResultCard } from '../Orayan/OrayanParts';
 import { formatDate } from '../../utils/dates';
 import { countByStatus } from '../../utils/health';
@@ -22,18 +25,110 @@ import { cn } from '../../utils/cn';
 
 export default function ReportDetail() {
   const { reportId } = useParams();
-  const [reports] = useReports();
-  const [language, setLanguage] = useState<'en' | 'si'>('en');
+  const [language, setLanguage] = useState<Language>('en');
+  const [results, setResults] = useState<LabResult[]>([]);
+  const [meta, setMeta] = useState<{
+    filename: string;
+    source: string;
+    created_at: string;
+    summary_text: string;
+  } | null>(null);
+  const [summary, setSummary] = useState('');
   const [expanded, setExpanded] = useState<string[]>([]);
+  const [explanationErrors, setExplanationErrors] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  const report = reports.find((r) => r.id === reportId);
+  const load = useCallback(async () => {
+    if (!reportId) return;
+    setLoading(true);
+    try {
+      const response = await getReport(reportId, language);
+      setResults(response.tests.map(toLabResult));
+      setMeta({
+        filename: response.filename,
+        source: response.source,
+        created_at: response.created_at,
+        summary_text: response.summary_text,
+      });
+      setSummary(response.summary_text);
+      setLoadError(null);
+    } catch (err) {
+      setLoadError(err instanceof ApiError ? err.message : 'Could not load that report.');
+    } finally {
+      setLoading(false);
+    }
+  }, [reportId, language]);
 
-  if (!report) {
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  /* Refresh just the summary when switching language, so the values do not flicker. */
+  const changeLanguage = async (next: Language) => {
+    setLanguage(next);
+    setResults((prev) =>
+      prev.map((r) => ({ ...r, explanation: undefined, explanationLoading: false })),
+    );
+    setExpanded([]);
+    setExplanationErrors({});
+    if (!reportId) return;
+    try {
+      const response = await getReportSummary(reportId, next);
+      setSummary(response.summary_text);
+    } catch {
+      /* keep whatever is already shown */
+    }
+  };
+
+  const toggleExplain = (result: LabResult) => {
+    if (expanded.includes(result.id)) {
+      setExpanded((prev) => prev.filter((id) => id !== result.id));
+      return;
+    }
+    setExpanded((prev) => [...prev, result.id]);
+    if (result.explanation || !reportId) return;
+
+    setResults((prev) =>
+      prev.map((r) => (r.id === result.id ? { ...r, explanationLoading: true } : r)),
+    );
+
+    void explainTest(reportId, result.name, language)
+      .then((response) =>
+        setResults((prev) =>
+          prev.map((r) =>
+            r.id === result.id
+              ? { ...r, explanation: response.explanation, explanationLoading: false }
+              : r,
+          ),
+        ),
+      )
+      .catch((err: unknown) => {
+        setResults((prev) =>
+          prev.map((r) => (r.id === result.id ? { ...r, explanationLoading: false } : r)),
+        );
+        setExplanationErrors((prev) => ({
+          ...prev,
+          [result.id]:
+            err instanceof ApiError ? err.message : 'Could not explain this test right now.',
+        }));
+      });
+  };
+
+  if (loading) {
+    return (
+      <div className="page-container py-10">
+        <LoadingState label="Loading report…" />
+      </div>
+    );
+  }
+
+  if (loadError || !meta) {
     return (
       <div className="page-container py-10">
         <EmptyState
           title="Report not found"
-          description="It may have been deleted from your history."
+          description={loadError ?? 'It may have been deleted from your history.'}
           action={
             <Link to="/report-history" className={buttonClass('primary', 'sm')}>
               Back to report history
@@ -44,11 +139,9 @@ export default function ReportDetail() {
     );
   }
 
-  const counts = countByStatus(report.results);
+  const counts = countByStatus(results);
   const withinRange = counts.normal + counts.attention;
-
-  const toggle = (id: string) =>
-    setExpanded((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  const reportType = meta.source === 'image' ? 'Scanned Report' : 'Lab Report';
 
   return (
     <div className="page-container py-6 sm:py-8">
@@ -61,9 +154,9 @@ export default function ReportDetail() {
       </Link>
 
       <PageHeader
-        eyebrow={report.type}
-        title={report.fileName}
-        description={`Uploaded ${formatDate(report.uploadedAt)} · ${report.lab}`}
+        eyebrow={reportType}
+        title={meta.filename}
+        description={`Uploaded ${formatDate(meta.created_at.slice(0, 10))}`}
         icon={<ScanLine className="h-6 w-6" aria-hidden />}
         actions={
           <>
@@ -81,21 +174,21 @@ export default function ReportDetail() {
       {/* Overview */}
       <GlassCard className="mb-4">
         <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Info icon={<User className="h-4 w-4" />} label="Patient" value={report.patient} />
-          <Info icon={<Calendar className="h-4 w-4" />} label="Report date" value={formatDate(report.date)} />
-          <Info icon={<ScanLine className="h-4 w-4" />} label="Report type" value={report.type} />
-          <Info icon={<FlaskConical className="h-4 w-4" />} label="Report ID" value={report.reportId} />
+          <Info icon={<Calendar className="h-4 w-4" />} label="Uploaded" value={formatDate(meta.created_at.slice(0, 10))} />
+          <Info icon={<ScanLine className="h-4 w-4" />} label="Report type" value={reportType} />
+          <Info icon={<FlaskConical className="h-4 w-4" />} label="Values read" value={String(results.length)} />
+          <Info icon={<User className="h-4 w-4" />} label="Reference" value={reportId?.slice(0, 8) ?? '—'} />
         </dl>
       </GlassCard>
 
-      {report.results.length === 0 ? (
+      {results.length === 0 ? (
         <EmptyState
-          title="No analysis yet"
-          description="This report has not been analyzed. Connect an AI model (see .env.example) and run analysis from Orayan."
+          title="No values were read"
+          description="Orayan could not find any test rows in this report. If it is a scan, try uploading a clear image instead."
           action={
             <Link to="/orayan" className={buttonClass('primary', 'sm')}>
               <ScanLine className="h-4 w-4" aria-hidden />
-              Analyze with Orayan
+              Analyze another report
             </Link>
           }
         />
@@ -105,32 +198,39 @@ export default function ReportDetail() {
           <GlassCard variant="tint" className="mb-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-base font-bold text-ink-900">Report summary</h2>
-              <div className="flex items-center gap-2 rounded-full border border-primary-100 bg-white/80 p-0.5 text-[11px] font-bold">
-                {(['en', 'si'] as const).map((lang) => (
-                  <button
-                    key={lang}
-                    type="button"
-                    onClick={() => setLanguage(lang)}
-                    className={cn(
-                      'inline-flex items-center gap-1 rounded-full px-2.5 py-1 transition',
-                      language === lang
-                        ? 'bg-primary-600 text-white'
-                        : 'text-ink-500 hover:text-primary-600',
-                    )}
-                    aria-pressed={language === lang}
-                  >
-                    <Languages className="h-3 w-3" aria-hidden />
-                    {lang === 'en' ? 'English' : 'සිංහල'}
-                  </button>
-                ))}
-              </div>
+              <LanguageToggle value={language} onChange={(next) => void changeLanguage(next)} />
             </div>
+
+            {summary ? (
+              <div className="mt-4 space-y-3">
+                {summary
+                  .split(/\n{2,}/)
+                  .map((p) => p.trim())
+                  .filter(Boolean)
+                  .map((p, i) => (
+                    <p
+                      key={`${i}-${p.slice(0, 20)}`}
+                      className="whitespace-pre-line text-sm leading-relaxed text-ink-700"
+                    >
+                      {p}
+                    </p>
+                  ))}
+              </div>
+            ) : (
+              <p className="mt-4 rounded-2xl bg-white/70 px-4 py-3 text-xs text-ink-500">
+                No written summary is cached for this language yet.
+              </p>
+            )}
 
             <ul className="mt-4 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
               <Stat value={counts.total} label="values analyzed" tone="text-ink-900" />
               <Stat value={withinRange} label="within reference range" tone="text-ok-600" />
               <Stat value={counts.outside} label="outside reference range" tone="text-alert-600" />
-              <Stat value={expanded.length} label="terms you've explained" tone="text-primary-600" />
+              <Stat
+                value={results.filter((r) => r.explanation).length}
+                label="terms you've explained"
+                tone="text-primary-600"
+              />
             </ul>
 
             <p className="mt-4 rounded-2xl border border-warn-100 bg-white/70 px-4 py-3 text-xs leading-relaxed text-warn-700">
@@ -142,15 +242,16 @@ export default function ReportDetail() {
           {/* Results */}
           <h2 className="mb-3 text-base font-bold text-ink-900">Values</h2>
           <div className="grid gap-3.5 md:grid-cols-2">
-            {report.results.map((r) => (
+            {results.map((r) => (
               <ResultCard
                 key={r.id}
                 result={r}
-                term={glossary.find((g) => g.term.toLowerCase() === r.name.toLowerCase())}
                 language={language}
-                onLanguageChange={setLanguage}
+                onLanguageChange={(next) => void changeLanguage(next)}
                 expanded={expanded.includes(r.id)}
-                onToggle={() => toggle(r.id)}
+                onExplain={() => toggleExplain(r)}
+                onHide={() => toggleExplain(r)}
+                explanationError={explanationErrors[r.id]}
               />
             ))}
           </div>

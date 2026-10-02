@@ -25,3 +25,16 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Python backend (ai/)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Local database and secrets for the AI backend
+ai/data/
+ai/.env
+*.db
+*.sqlite3

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Bot,
@@ -12,20 +12,18 @@ import {
   Unplug,
 } from 'lucide-react';
 import type { ChatConversation, ChatMessage } from '../../types';
-import { NOT_CONNECTED_NOTICE, chat, isAiConfigured } from '../../services/ai';
-import type { AiMessage } from '../../services/ai';
+import { ApiError, resetChat, sendChat } from '../../lib/api';
+import type { Language } from '../../lib/api';
+import { useDictation, useSpeech } from '../../lib/speech';
+import { useAiStatus } from '../../hooks/useAiStatus';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { timeNow } from '../../utils/dates';
 import { cn } from '../../utils/cn';
 import { buttonClass } from '../../components/ui/Button';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { LanguageToggle } from '../../components/ui/LanguageToggle';
+import { VoiceIconButton } from '../../components/ui/VoiceIconButton';
 import { MessageBubble, EmergencyNotice } from './MessageBubble';
-
-const SYSTEM_PROMPT =
-  'You are Baymax, a friendly and concise health assistant inside the CONNECT app. ' +
-  'Give practical general health information in plain language and keep replies short. ' +
-  'You are not a substitute for professional medical advice, diagnosis or treatment: say so when ' +
-  'relevant and encourage the user to speak with a qualified clinician. Answer in English.';
 
 const DISCLAIMER =
   'Baymax AI provides general health information for education only. It does not diagnose conditions and does not replace a doctor, pharmacist or emergency service.';
@@ -33,21 +31,47 @@ const DISCLAIMER =
 const EMERGENCY_LINE =
   'If this is an emergency — severe chest pain, trouble breathing, unresponsiveness, heavy bleeding or sudden weakness — contact your local emergency services immediately.';
 
-const SUGGESTED_QUESTIONS = [
-  'I have a headache',
-  'What does a fever mean?',
-  'I feel tired all the time',
-  'How can I improve my sleep?',
-  'My blood pressure is a little high',
-  'How much water should I drink?',
-  'I feel stressed and anxious',
-  'How do I prepare for a doctor visit?',
-];
+const OFFLINE_NOTICE =
+  'Baymax cannot reach the AI server right now. Start it by running "npm run dev" in the project folder.';
+
+const OFFLINE_SI =
+  'බේය්මැක්ස් දැන් AI සේවාදායකයට ප්‍රවේශය ලබා ගත නොහැක. කරුණාකර ප්‍රොජෙක්ට් එකේ "npm run dev" ධාවනය කරන්න.';
+
+const WELCOME_TEXT: Record<Language, string> = {
+  en: "Hi, I'm Baymax. Ask me about your health.",
+  si: 'මම බේය්මැක්ස්. ඔබගේ සෞඛ්‍යය ගැන මෙයින් අසන්න.',
+};
+
+const EMERGENCY_LINE_SI =
+  'මෙය අරමුණු ගමන්වාත්කයක් නම් — ඛණ්ඩරේ දරුණු වේදනාව, හුරුන් ගැනීමේ අපහසුතාවය, ප්‍රතිචාරය නොදැකීම, රුධිර රූපනය හෝ හදිසි අඩුතාවය — ඔබගේ ප්‍රදේශීය අරමුණු සේවා ක්‍රමය ක්ෂණික වනවා ද අමතන්න.';
+
+const SUGGESTED_QUESTIONS: Record<Language, string[]> = {
+  en: [
+    'I have a headache',
+    'What does a fever mean?',
+    'I feel tired all the time',
+    'How can I improve my sleep?',
+    'My blood pressure is a little high',
+    'How much water should I drink?',
+    'I feel stressed and anxious',
+    'How do I prepare for a doctor visit?',
+  ],
+  si: [
+    'මට හිසරයක් ඇත',
+    'උණුසුම කියන්නේ කුමක්ද?',
+    'මම සහැකියෙලා බිඳවෙනවා',
+    'නින්ද කොච්චර වැඩිද ගන්න පුළුවන්ද?',
+    'මගේ රුධිර පීඩනය ටිකක් වැඩියි',
+    'දිනට ජලය කොච්චර බොන්න ඕනද?',
+    'මට තීව්‍රතාවයක් ඇත',
+    'වෛද්ය කරීමකට කොහොමද සූදානම් වන්නේ?',
+  ],
+};
 
 const WELCOME: ChatMessage = {
   id: 'welcome',
   role: 'assistant',
-  content: "Hi, I'm Baymax. Ask me about your health.",
+  content: WELCOME_TEXT.en,
   timestamp: timeNow(),
 };
 
@@ -95,8 +119,15 @@ export default function Baymax() {
   const [input, setInput] = useState('');
   const [typing, setTyping] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [language, setLanguage] = useState<Language>('en');
+  const { status: backend, refresh: probe } = useAiStatus();
   const bottomRef = useRef<HTMLDivElement>(null);
-  const configured = isAiConfigured();
+  const configured = backend === 'online';
+
+  const speech = useSpeech(language);
+  const dictation = useDictation(language, useCallback((text: string) => {
+    setInput((current) => (current ? `${current} ${text}` : text));
+  }, []));
 
   /* Ensure at least one conversation exists */
   useEffect(() => {
@@ -144,6 +175,8 @@ export default function Baymax() {
   const handleSend = async (raw: string) => {
     const text = raw.trim();
     if (!text || !active || typing) return;
+    speech.cancel();
+    dictation.stop();
 
     const userMsg: ChatMessage = {
       id: newId('u'),
@@ -155,8 +188,6 @@ export default function Baymax() {
     const title =
       active.messages.length <= 1 ? text.slice(0, 34) + (text.length > 34 ? '…' : '') : active.title;
 
-    const history = active.messages;
-
     updateActive({
       ...active,
       title,
@@ -166,23 +197,28 @@ export default function Baymax() {
     setInput('');
 
     if (!configured) {
-      appendAssistant(active.id, NOT_CONNECTED_NOTICE);
+      appendAssistant(active.id, language === 'si' ? OFFLINE_SI : OFFLINE_NOTICE);
       return;
     }
 
-    const request: AiMessage[] = [
-      { role: 'system', content: SYSTEM_PROMPT },
-      ...history.map((m) => ({ role: m.role, content: m.content })),
-      { role: 'user', content: text },
-    ];
-
     setTyping(true);
     try {
-      const reply = await chat({ messages: request });
-      appendAssistant(active.id, reply);
+      const result = await sendChat(text, active.sessionId, language);
+      if (result.session_id !== active.sessionId) {
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === active.id ? { ...c, sessionId: result.session_id } : c,
+          ),
+        );
+      }
+      appendAssistant(active.id, result.reply);
+      speech.speak(result.reply);
+      probe();
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      appendAssistant(active.id, `Something went wrong: ${message}. Please try again.`);
+      const message =
+        err instanceof ApiError ? err.message : 'Something went wrong. Please try again.';
+      if (err instanceof ApiError && err.isOffline) probe();
+      appendAssistant(active.id, `Something went wrong: ${message}`);
     } finally {
       setTyping(false);
     }
@@ -197,6 +233,10 @@ export default function Baymax() {
   };
 
   const handleDelete = (id: string) => {
+    const target = conversations.find((c) => c.id === id);
+    if (target?.sessionId) {
+      resetChat(target.sessionId).catch(() => undefined);
+    }
     const next = conversations.filter((c) => c.id !== id);
     if (next.length === 0) {
       const fresh = createConversation(0);
@@ -315,15 +355,22 @@ export default function Baymax() {
                 <span
                   className={cn(
                     'h-1.5 w-1.5 rounded-full',
-                    configured ? 'bg-ok-500' : 'bg-ink-400',
+                    backend === 'online'
+                      ? 'bg-ok-500'
+                      : backend === 'checking'
+                        ? 'bg-warn-400'
+                        : 'bg-alert-500',
                   )}
                   aria-hidden
                 />
-                {configured
+                {backend === 'online'
                   ? 'Personal Health Assistant · online'
-                  : 'Personal Health Assistant · not connected'}
+                  : backend === 'checking'
+                    ? 'Connecting to AI…'
+                    : 'Personal Health Assistant · offline'}
               </p>
             </div>
+            <LanguageToggle value={language} onChange={setLanguage} />
             <button
               type="button"
               onClick={handleNewChat}
@@ -334,17 +381,18 @@ export default function Baymax() {
             </button>
           </header>
 
-          {!configured ? (
+          {backend !== 'online' ? (
             <div className="border-b border-primary-100 bg-primary-50/70 px-4 py-3 sm:px-5">
               <div className="flex items-start gap-3 rounded-2xl border border-primary-100 bg-white/80 px-3.5 py-3">
                 <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-primary-100 text-primary-600">
                   <Unplug className="h-4 w-4" aria-hidden />
                 </span>
                 <div className="min-w-0">
-                  <p className="text-xs font-bold text-primary-700">AI model not connected</p>
-                  <p className="mt-1 text-xs leading-relaxed text-ink-600">{NOT_CONNECTED_NOTICE}</p>
-                  <p className="mt-1.5 text-[11px] font-semibold text-primary-600">
-                    (see .env.example)
+                  <p className="text-xs font-bold text-primary-700">
+                    {backend === 'checking' ? 'Connecting to AI…' : 'AI server not running'}
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-ink-600">
+                    {language === 'si' ? OFFLINE_SI : OFFLINE_NOTICE}
                   </p>
                 </div>
               </div>
@@ -356,22 +404,44 @@ export default function Baymax() {
             <div className="mx-auto flex max-w-xl items-start gap-2 rounded-2xl border border-warn-100 bg-warn-50/80 px-4 py-2.5 text-xs leading-relaxed text-warn-700">
               <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
               <span>
-                <strong className="font-bold">General information only.</strong> {EMERGENCY_LINE}
+                <strong className="font-bold">
+                  {language === 'si' ? 'සාමාන්‍ය තොරතුරු පමණක්.' : 'General information only.'}
+                </strong>{' '}
+                {language === 'si' ? EMERGENCY_LINE_SI : EMERGENCY_LINE}
               </span>
             </div>
 
             {active?.messages.map((m) => (
               <div key={m.id} className="space-y-2">
-                <MessageBubble message={m} />
+                <div className="flex items-start gap-2">
+                  <MessageBubble message={m} />
+                  {m.role === 'assistant' && speech.supported && m.id !== 'welcome' ? (
+                    <VoiceIconButton
+                      icon="speaker"
+                      active={speech.speaking}
+                      onClick={() =>
+                        speech.speaking ? speech.cancel() : speech.speak(m.content)
+                      }
+                      label={
+                        language === 'si'
+                          ? 'කියවන්න'
+                          : speech.speaking
+                            ? 'Stop reading'
+                            : 'Read this reply aloud'
+                      }
+                      className="mt-1"
+                    />
+                  ) : null}
+                </div>
                 {m.role === 'user' && isEmergencyLanguage(m.content) ? (
                   <EmergencyNotice />
                 ) : null}
               </div>
             ))}
 
-            {active && active.messages.length <= 1 && !configured ? (
+            {active && active.messages.length <= 1 && backend === 'offline' ? (
               <p className="text-center text-xs text-ink-400">
-                Responses require a connected AI model.
+                Responses require the AI server to be running.
               </p>
             ) : null}
 
@@ -402,7 +472,7 @@ export default function Baymax() {
             <div className="border-t border-ink-100/80 bg-white/50 px-4 py-3 sm:px-6">
               <p className="mb-2 text-xs font-semibold text-ink-500">Suggested questions</p>
               <div className="flex flex-wrap gap-2">
-                {SUGGESTED_QUESTIONS.map((q) => (
+                {SUGGESTED_QUESTIONS[language].map((q) => (
                   <button
                     key={q}
                     type="button"
@@ -439,9 +509,30 @@ export default function Baymax() {
                     handleSend(input);
                   }
                 }}
-                placeholder="Describe how you're feeling…"
+                placeholder={
+                  language === 'si'
+                    ? 'ඔබගේ අත්දැකීම ලියන්න…'
+                    : 'Describe how you’re feeling…'
+                }
                 className="max-h-32 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-ink-800 outline-none placeholder:text-ink-400"
               />
+              {dictation.supported ? (
+                <VoiceIconButton
+                  icon="mic"
+                  active={dictation.listening}
+                  onClick={dictation.toggle}
+                  label={
+                    language === 'si'
+                      ? dictation.listening
+                        ? 'නවත්වන්න'
+                        : 'කතා කරන්න'
+                      : dictation.listening
+                        ? 'Stop dictation'
+                        : 'Speak your message'
+                  }
+                  disabled={typing}
+                />
+              ) : null}
               <button
                 type="submit"
                 disabled={!input.trim() || typing}
@@ -451,6 +542,11 @@ export default function Baymax() {
                 <Send className="h-4 w-4" />
               </button>
             </div>
+            {dictation.error ? (
+              <p className="mt-2 text-center text-[11px] font-semibold text-alert-600">
+                {dictation.error}
+              </p>
+            ) : null}
             <p className="mt-2 text-center text-[11px] leading-relaxed text-ink-400">
               Baymax AI shares general health information only — it does not diagnose conditions
               or replace professional medical care.

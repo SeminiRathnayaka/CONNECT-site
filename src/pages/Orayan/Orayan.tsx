@@ -1,4 +1,4 @@
-﻿import { useState } from 'react';
+﻿import { useCallback, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowRight,
@@ -6,38 +6,36 @@ import {
   Calendar,
   FileText,
   FlaskConical,
-  Languages,
   ScanLine,
   ShieldCheck,
   TriangleAlert,
   Unplug,
   User,
 } from 'lucide-react';
-import type { MedicalReport } from '../../types';
-import { NOT_CONNECTED_NOTICE, chat, isAiConfigured } from '../../services/ai';
-import { glossary } from '../../data/glossary';
+import type { LabResult, MedicalReport } from '../../types';
+import { ApiError, explainTest, getReportSummary, uploadReport } from '../../lib/api';
+import type { Language, TestCounts } from '../../lib/api';
+import { useAiStatus } from '../../hooks/useAiStatus';
 import { useReports } from '../../hooks/useReports';
 import { useToast } from '../../hooks/useToast';
 import { useNotifications } from '../../hooks/useNotifications';
 import { useAuth } from '../../hooks/useAuth';
 import { formatDate, todayISO } from '../../utils/dates';
 import { countByStatus } from '../../utils/health';
+import { toLabResult } from '../../lib/api';
 import { cn } from '../../utils/cn';
 import { buttonClass } from '../../components/ui/Button';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { LanguageToggle } from '../../components/ui/LanguageToggle';
 import { AnalysisProgress, DropZone, ResultCard } from './OrayanParts';
 import type { PickedFile } from './OrayanParts';
+import { AskOrayan } from './AskOrayan';
 
 type Stage = 'upload' | 'analyzing' | 'done';
 
-const ANALYST_SYSTEM =
-  'You are Orayan, a lab-report analyst inside a health app. Explain medical laboratory reports ' +
-  'in plain language for a general audience: describe what the report is, walk through the values, ' +
-  'flag anything outside the typical reference range, and explain medical terms simply. ' +
-  'Structure the answer in short paragraphs with clear headings where helpful. ' +
-  'You are not a medical professional: never diagnose, and end by reminding the user that this is ' +
-  'not medical advice and that they should discuss the report with a qualified clinician.';
+const OFFLINE_NOTICE =
+  'Orayan cannot reach the AI server right now. Start it by running "npm run dev" in the project folder.';
 
 const stepper = [
   { key: 'upload', label: 'Upload report' },
@@ -45,102 +43,236 @@ const stepper = [
   { key: 'done', label: 'Results' },
 ] as const;
 
+/** Backend counts are stored on the report so Report History can show them too. */
+function toStoredCounts(counts: TestCounts) {
+  return {
+    total: counts.total,
+    inRange: counts.in_range,
+    low: counts.low,
+    high: counts.high,
+    unknown: counts.unknown,
+    qualitative: counts.qualitative,
+    flaggedTotal: counts.flagged_total,
+  };
+}
+
+function toMedicalReport(
+  response: Awaited<ReturnType<typeof uploadReport>>,
+  results: LabResult[],
+  patient: string,
+): MedicalReport {
+  const isImage = response.source === 'image';
+  return {
+    id: response.report_id,
+    reportId: response.report_id,
+    fileName: response.filename,
+    type: isImage ? 'Scanned Report' : 'Lab Report',
+    date: todayISO(),
+    lab: 'Not provided',
+    patient,
+    results,
+    explainedTerms: results.filter((r) => r.explanation).length,
+    uploadedAt: todayISO(),
+    counts: toStoredCounts(response.counts),
+    summaryText: response.summary_text,
+  };
+}
+
 export default function Orayan() {
   const [stage, setStage] = useState<Stage>('upload');
   const [file, setFile] = useState<PickedFile | null>(null);
   const [report, setReport] = useState<MedicalReport | null>(null);
-  const [language, setLanguage] = useState<'en' | 'si'>('en');
+  const [language, setLanguage] = useState<Language>('en');
   const [expanded, setExpanded] = useState<string[]>([]);
+  const [explanationErrors, setExplanationErrors] = useState<Record<string, string>>({});
   const [analysisText, setAnalysisText] = useState<string | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [summaryBusy, setSummaryBusy] = useState(false);
   const [, setReports] = useReports();
   const { toast } = useToast();
   const { push } = useNotifications();
   const { user } = useAuth();
   const navigate = useNavigate();
-  const configured = isAiConfigured();
+  const { status: backend, refresh: probe } = useAiStatus();
+  const online = backend === 'online';
 
-  const buildReport = (picked: PickedFile): MedicalReport => ({
-    id: `r-${Date.now()}`,
-    fileName: picked.name,
-    type:
-      picked.name.toLowerCase().endsWith('.png') || picked.name.toLowerCase().endsWith('.jpg')
-        ? 'Scanned Report'
-        : 'Lab Report',
-    date: todayISO(),
-    lab: 'Not provided',
-    patient: user?.name ?? 'Not set',
-    reportId: '—',
-    results: [],
-    explainedTerms: 0,
-    uploadedAt: todayISO(),
-  });
+  /* Keep the latest file so retryAnalysis can reuse it without a re-pick. */
+  const fileRef = useRef<PickedFile | null>(null);
 
-  const runAnalysis = async (picked: PickedFile) => {
-    setAnalysisText(null);
-    setAnalysisError(null);
-    try {
-      const text = await chat({
-        messages: [
-          { role: 'system', content: ANALYST_SYSTEM },
-          {
-            role: 'user',
-            content:
-              `Report file: ${picked.name} (${picked.sizeKB} KB)\n\n` +
-              'The file contents could not be read as text, so no extracted values are available. ' +
-              'Analyse what you can from the file name, explain what kind of report this is and ' +
-              'which measurements a person should look at.',
-          },
-        ],
-      });
-      setAnalysisText(text);
-      setStage('done');
-      toast('Report analyzed and saved to your report history.');
-      push({
-        title: 'Report analysis ready',
-        body: `${picked.name} was analyzed and saved to your report history.`,
-        type: 'report',
-        link: '/report-history',
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setAnalysisError(message);
-      setStage('done');
-      toast('Analysis failed. Please try again.', 'warning');
-    }
-  };
+  /* ------------------------------------------------------------------ */
+  /* Upload                                                              */
+  /* ------------------------------------------------------------------ */
+
+  const runAnalysis = useCallback(
+    async (picked: PickedFile, lang: Language) => {
+      setAnalysisText(null);
+      setAnalysisError(null);
+      setExplanationErrors({});
+      setExpanded([]);
+      setStage('analyzing');
+
+      try {
+        const response = await uploadReport(picked.file, lang);
+        const results = response.tests.map(toLabResult);
+        const created = toMedicalReport(response, results, user?.name ?? 'Not set');
+
+        setReport(created);
+        setAnalysisText(response.summary_text || null);
+        setStage('done');
+        setReports((prev) => [created, ...prev.filter((r) => r.id !== created.id)]);
+
+        if (response.summary_error) {
+          toast('Report read successfully, but the AI summary is unavailable.', 'warning');
+        } else {
+          toast('Report analyzed and saved to your report history.');
+        }
+
+        push({
+          title: 'Report analysis ready',
+          body: `${picked.name} was analyzed and saved to your report history.`,
+          type: 'report',
+          link: '/report-history',
+        });
+      } catch (err) {
+        const message = err instanceof ApiError ? err.message : 'Something went wrong.';
+        setAnalysisError(message);
+        setStage('done');
+        toast('Analysis failed. Please try again.', 'warning');
+        probe();
+      }
+    },
+    [push, setReports, toast, user, probe],
+  );
 
   const startAnalysis = (picked: PickedFile) => {
-    const created = buildReport(picked);
-    setFile(picked);
-    setReport(created);
-    setAnalysisText(null);
-    setAnalysisError(null);
-    setExpanded([]);
-    setReports((prev) => [created, ...prev]);
-
-    if (!configured) {
-      setStage('done');
-      return;
-    }
-    setStage('analyzing');
-    void runAnalysis(picked);
+    fileRef.current = picked;
+    void runAnalysis(picked, language);
   };
 
   const retryAnalysis = () => {
-    if (!file || !configured) return;
-    setStage('analyzing');
-    void runAnalysis(file);
+    const picked = fileRef.current;
+    if (!picked || !online) return;
+    void runAnalysis(picked, language);
   };
 
   const reset = () => {
     setStage('upload');
     setFile(null);
+    fileRef.current = null;
     setReport(null);
     setAnalysisText(null);
     setAnalysisError(null);
     setExpanded([]);
+    setExplanationErrors({});
   };
+
+  /* ------------------------------------------------------------------ */
+  /* Language switch: refresh the summary and any open explanations       */
+  /* ------------------------------------------------------------------ */
+
+  const changeLanguage = async (next: Language) => {
+    setLanguage(next);
+    if (!report) return;
+
+    setSummaryBusy(true);
+    try {
+      const response = await getReportSummary(report.reportId, next);
+      setAnalysisText(response.summary_text || null);
+      setReport((prev) => (prev ? { ...prev, summaryText: response.summary_text } : prev));
+    } catch {
+      /* keep the previous summary if the switch fails */
+    } finally {
+      setSummaryBusy(false);
+    }
+
+    /* Explanations are written in one language, so the old text is no longer
+       relevant. Clear it and close the cards rather than silently spending
+       another AI call on every open card. */
+    setReport((prev) =>
+      prev
+        ? {
+            ...prev,
+            results: prev.results.map((r) => ({
+              ...r,
+              explanation: undefined,
+              explanationLoading: false,
+            })),
+            explainedTerms: 0,
+          }
+        : prev,
+    );
+    setExpanded([]);
+    setExplanationErrors({});
+  };
+
+  /* ------------------------------------------------------------------ */
+  /* Explain a single test                                               */
+  /* ------------------------------------------------------------------ */
+
+  const toggleExplain = (result: LabResult) => {
+    const isOpen = expanded.includes(result.id);
+
+    if (isOpen) {
+      setExpanded((prev) => prev.filter((id) => id !== result.id));
+      return;
+    }
+
+    setExpanded((prev) => [...prev, result.id]);
+
+    /* Already explained in this language? The backend caches, so re-opening
+       is free, but we still need the text locally. */
+    if (result.explanation) return;
+
+    const applyExplanation = (text: string) =>
+      setReport((prev) =>
+        prev
+          ? {
+              ...prev,
+              results: prev.results.map((r) =>
+                r.id === result.id
+                  ? { ...r, explanation: text, explanationLoading: false }
+                  : r,
+              ),
+              explainedTerms: prev.results.filter((r) => r.explanation).length + 1,
+            }
+          : prev,
+      );
+
+    setReport((prev) =>
+      prev
+        ? {
+            ...prev,
+            results: prev.results.map((r) =>
+              r.id === result.id ? { ...r, explanationLoading: true } : r,
+            ),
+          }
+        : prev,
+    );
+
+    void explainTest(report!.reportId, result.name, language)
+      .then((response) => applyExplanation(response.explanation))
+      .catch((err: unknown) => {
+        setReport((prev) =>
+          prev
+            ? {
+                ...prev,
+                results: prev.results.map((r) =>
+                  r.id === result.id ? { ...r, explanationLoading: false } : r,
+                ),
+              }
+            : prev,
+        );
+        setExplanationErrors((prev) => ({
+          ...prev,
+          [result.id]:
+            err instanceof ApiError ? err.message : 'Could not explain this test right now.',
+        }));
+      });
+  };
+
+  /* ------------------------------------------------------------------ */
+  /* Derived                                                             */
+  /* ------------------------------------------------------------------ */
 
   const counts = report ? countByStatus(report.results) : null;
   const withinRange = counts ? counts.normal + counts.attention : 0;
@@ -151,15 +283,12 @@ export default function Orayan() {
         .filter(Boolean)
     : [];
 
-  const toggleExplain = (id: string) =>
-    setExpanded((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
-
   return (
     <div className="page-container py-6 sm:py-8">
       <PageHeader
         eyebrow="Orayan AI"
         title="Understand your medical reports"
-        description="Upload a report and Orayan's connected AI model explains what it means in plain language, highlights anything outside the reference range, and puts the medical terms into simple words."
+        description="Upload a report and Orayan reads every value, highlights anything outside the reference range, and explains the medical terms in plain language."
         icon={<ScanLine className="h-6 w-6" aria-hidden />}
         actions={
           stage === 'done' ? (
@@ -221,18 +350,30 @@ export default function Orayan() {
       {stage === 'upload' ? (
         <div className="grid gap-5 lg:grid-cols-[1.4fr_1fr]">
           <section className="glass rounded-3xl p-5 sm:p-7" aria-labelledby="upload-title">
-            <h2 id="upload-title" className="text-base font-bold text-ink-900">
-              Step 1 — Upload medical report
-            </h2>
-            <p className="mt-1 mb-4 text-sm text-ink-600">
-              Blood tests, lipid profiles, thyroid panels or any lab report.
-            </p>
-            <DropZone file={file} onFile={(f) => setFile(f)} onClear={() => setFile(null)} />
-            <div className="mt-5 flex justify-end">
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 id="upload-title" className="text-base font-bold text-ink-900">
+                  Step 1 — Upload medical report
+                </h2>
+                <p className="mt-1 text-sm text-ink-600">
+                  Blood tests, lipid profiles, thyroid panels or any lab report.
+                </p>
+              </div>
+              <LanguageToggle value={language} onChange={(next) => void changeLanguage(next)} />
+            </div>
+            <DropZone
+              file={file}
+              onFile={(f) => setFile(f)}
+              onClear={() => setFile(null)}
+            />
+            <div className="mt-5 flex items-center justify-end gap-3">
+              {!online ? (
+                <p className="text-xs text-ink-500">{OFFLINE_NOTICE}</p>
+              ) : null}
               <button
                 type="button"
                 className={buttonClass('primary', 'md')}
-                disabled={!file}
+                disabled={!file || !online}
                 onClick={() => file && startAnalysis(file)}
               >
                 <FlaskConical className="h-4 w-4" aria-hidden />
@@ -245,10 +386,10 @@ export default function Orayan() {
             <h2 className="text-base font-bold text-ink-900">What Orayan does</h2>
             <ol className="space-y-3.5 text-sm text-ink-700">
               {[
-                'Sends the report details to your connected AI model.',
-                'Explains each measured value in plain language.',
-                'Marks values that need attention — without diagnosing.',
-                'Explains hard terms in simple English and Sinhala.',
+                'Reads each measured value straight from your report.',
+                'Compares every value against the reference range on the report.',
+                'Explains what each result means in plain language.',
+                'Answers your follow-up questions in English or Sinhala.',
               ].map((t, i) => (
                 <li key={t} className="flex gap-3">
                   <span className="grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-white/80 text-xs font-bold text-primary-600">
@@ -294,7 +435,7 @@ export default function Orayan() {
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-ink-100 px-3 py-1 text-xs font-bold text-ink-600">
-                  <Unplug className="h-3.5 w-3.5" aria-hidden /> Analysis not connected
+                  <Unplug className="h-3.5 w-3.5" aria-hidden /> Reading values only
                 </span>
               )}
             </div>
@@ -320,26 +461,72 @@ export default function Orayan() {
 
             <p className="mt-4 flex flex-wrap gap-x-5 gap-y-1 border-t border-ink-100 pt-3 text-xs text-ink-500">
               <span>File: {report.fileName}</span>
-              <span>Report ID: {report.reportId}</span>
+              <span>Reference: {report.reportId.slice(0, 8)}</span>
             </p>
           </section>
 
-          {/* Model analysis */}
+          {/* Analysis failed */}
+          {analysisError ? (
+            <section
+              className="glass rounded-3xl border border-alert-100 p-5 sm:p-6"
+              aria-labelledby="analysis-error-title"
+            >
+              <div className="flex items-start gap-3">
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-alert-50 text-alert-600">
+                  <TriangleAlert className="h-5 w-5" aria-hidden />
+                </span>
+                <div className="min-w-0">
+                  <h2 id="analysis-error-title" className="text-base font-bold text-ink-900">
+                    Could not read that report
+                  </h2>
+                  <p className="mt-1 text-sm leading-relaxed text-ink-600">
+                    {analysisError}
+                  </p>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className={buttonClass('primary', 'sm')}
+                      onClick={retryAnalysis}
+                      disabled={!online}
+                    >
+                      Try again
+                    </button>
+                    <button
+                      type="button"
+                      className={buttonClass('secondary', 'sm')}
+                      onClick={reset}
+                    >
+                      Start over
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </section>
+          ) : null}
+
+          {/* Summary */}
           {analysisText ? (
             <section
               className="glass-tint rounded-3xl p-5 sm:p-6"
               aria-labelledby="analysis-title"
             >
-              <div className="flex items-center gap-3">
-                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-primary-500 to-aqua-500 text-white shadow-[0_12px_24px_-16px_rgba(37,99,235,0.9)]">
-                  <Bot className="h-5 w-5" aria-hidden />
-                </span>
-                <div className="min-w-0">
-                  <h2 id="analysis-title" className="text-base font-bold text-ink-900">
-                    Model analysis
-                  </h2>
-                  <p className="truncate text-xs text-ink-500">{report.fileName}</p>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-primary-500 to-aqua-500 text-white shadow-[0_12px_24px_-16px_rgba(37,99,235,0.9)]">
+                    <Bot className="h-5 w-5" aria-hidden />
+                  </span>
+                  <div className="min-w-0">
+                    <h2 id="analysis-title" className="text-base font-bold text-ink-900">
+                      Report summary
+                    </h2>
+                    <p className="truncate text-xs text-ink-500">{report.fileName}</p>
+                  </div>
                 </div>
+                <LanguageToggle
+                  value={language}
+                  onChange={(next) => void changeLanguage(next)}
+                  disabled={summaryBusy}
+                />
               </div>
 
               <div className="mt-4 space-y-4">
@@ -361,105 +548,19 @@ export default function Orayan() {
             </section>
           ) : null}
 
-          {/* Analysis failed */}
-          {analysisError ? (
-            <section
-              className="glass rounded-3xl border border-alert-100 p-5 sm:p-6"
-              aria-labelledby="analysis-error-title"
-            >
-              <div className="flex items-start gap-3">
-                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-alert-50 text-alert-600">
-                  <TriangleAlert className="h-5 w-5" aria-hidden />
-                </span>
-                <div className="min-w-0">
-                  <h2 id="analysis-error-title" className="text-base font-bold text-ink-900">
-                    Analysis failed
-                  </h2>
-                  <p className="mt-1 text-sm leading-relaxed text-ink-600">
-                    Something went wrong: {analysisError}. Please try again.
-                  </p>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      className={buttonClass('primary', 'sm')}
-                      onClick={retryAnalysis}
-                    >
-                      Try again
-                    </button>
-                    <button
-                      type="button"
-                      className={buttonClass('secondary', 'sm')}
-                      onClick={reset}
-                    >
-                      Start over
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </section>
-          ) : null}
-
-          {/* Not connected */}
-          {!analysisText && !analysisError && !configured ? (
-            <section
-              className="glass rounded-3xl border border-primary-100 p-5 sm:p-6"
-              aria-labelledby="not-connected-title"
-            >
-              <div className="flex items-start gap-3">
-                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-primary-50 text-primary-600">
-                  <Unplug className="h-5 w-5" aria-hidden />
-                </span>
-                <div className="min-w-0">
-                  <h2 id="not-connected-title" className="text-base font-bold text-ink-900">
-                    Analysis not connected
-                  </h2>
-                  <p className="mt-1 text-sm leading-relaxed text-ink-600">
-                    {NOT_CONNECTED_NOTICE}
-                  </p>
-                  <p className="mt-2 text-xs font-semibold text-primary-600">(see .env.example)</p>
-                </div>
-              </div>
-            </section>
-          ) : null}
-
-          {/* Summary + extracted values (when present) */}
+          {/* Extracted values */}
           {counts && report.results.length > 0 ? (
             <>
-              <section
-                className="glass-tint rounded-3xl p-5 sm:p-6"
-                aria-labelledby="summary-title"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h2 id="summary-title" className="text-base font-bold text-ink-900">
-                    Report summary
-                  </h2>
-                  <div className="flex items-center gap-2 rounded-full border border-primary-100 bg-white/80 p-0.5 text-[11px] font-bold">
-                    {(['en', 'si'] as const).map((lang) => (
-                      <button
-                        key={lang}
-                        type="button"
-                        onClick={() => setLanguage(lang)}
-                        className={cn(
-                          'inline-flex items-center gap-1 rounded-full px-2.5 py-1 transition',
-                          language === lang
-                            ? 'bg-primary-600 text-white'
-                            : 'text-ink-500 hover:text-primary-600',
-                        )}
-                        aria-pressed={language === lang}
-                      >
-                        <Languages className="h-3 w-3" aria-hidden />
-                        {lang === 'en' ? 'English' : 'සිංහල'}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
+              <section className="glass-tint rounded-3xl p-5 sm:p-6" aria-labelledby="stats-title">
+                <h2 id="stats-title" className="text-base font-bold text-ink-900">
+                  What the numbers say
+                </h2>
                 <ul className="mt-4 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
                   <SummaryStat value={counts.total} label="values analyzed" tone="text-ink-900" />
                   <SummaryStat value={withinRange} label="within reference range" tone="text-ok-600" />
                   <SummaryStat value={counts.outside} label="outside reference range" tone="text-alert-600" />
                   <SummaryStat
-                    value={expanded.length}
+                    value={report.explainedTerms}
                     label="terms you've explained"
                     tone="text-primary-600"
                   />
@@ -487,37 +588,40 @@ export default function Orayan() {
                     <ResultCard
                       key={r.id}
                       result={r}
-                      term={glossary.find((g) => g.term.toLowerCase() === r.name.toLowerCase())}
                       language={language}
-                      onLanguageChange={setLanguage}
+                      onLanguageChange={(next) => void changeLanguage(next)}
                       expanded={expanded.includes(r.id)}
-                      onToggle={() => toggleExplain(r.id)}
+                      onExplain={() => toggleExplain(r)}
+                      onHide={() => toggleExplain(r)}
+                      explanationError={explanationErrors[r.id]}
                     />
                   ))}
                 </div>
               </section>
+
+              {/* Level 3 — ask questions about this report */}
+              <AskOrayan
+                reportId={report.reportId}
+                reportName={report.fileName}
+                language={language}
+                onLanguageChange={(next) => void changeLanguage(next)}
+              />
             </>
           ) : null}
 
           {/* Follow-ups */}
           <section className="flex flex-col gap-3 sm:flex-row">
-            <Link
-              to="/dashboard"
-              className={buttonClass('secondary', 'md', 'flex-1 justify-center')}
-            >
+            <Link to="/dashboard" className={buttonClass('secondary', 'md', 'flex-1 justify-center')}>
               See it on your dashboard
             </Link>
-            <Link
-              to="/doctor-prep"
-              className={buttonClass('primary', 'md', 'flex-1 justify-center')}
-            >
+            <Link to="/doctor-prep" className={buttonClass('primary', 'md', 'flex-1 justify-center')}>
               Prepare questions for your doctor
             </Link>
           </section>
         </div>
       ) : null}
 
-      {stage === 'done' && !report ? (
+      {stage === 'done' && !report && !analysisError ? (
         <EmptyState title="Nothing to show" description="Upload a report to begin." />
       ) : null}
     </div>

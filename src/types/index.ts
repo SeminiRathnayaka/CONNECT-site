@@ -87,25 +87,41 @@ export interface LabResult {
   id: string;
   name: string;
   value: number;
+  /** Raw text as printed on the report, e.g. "<0.1" or "Negative". */
+  valueText: string;
   unit: string;
   reference: string;
-  refLow: number;
-  refHigh: number;
+  refLow: number | null;
+  refHigh: number | null;
   status: ValueStatus;
   note: string;
+  /** Set once Orayan has explained this test. */
+  explanation?: string;
+  explanationLoading?: boolean;
 }
 
 export interface MedicalReport {
   id: string;
+  /** Backend report id, needed for explain / summary / ask calls. */
+  reportId: string;
   fileName: string;
   type: string;
   date: string;
   lab: string;
   patient: string;
-  reportId: string;
   results: LabResult[];
   explainedTerms: number;
   uploadedAt: string;
+  counts?: {
+    total: number;
+    inRange: number;
+    low: number;
+    high: number;
+    unknown: number;
+    qualitative: number;
+    flaggedTotal: number;
+  };
+  summaryText?: string;
 }
 
 /* ---------- Medications ---------- */
@@ -184,6 +200,8 @@ export interface ChatConversation {
   title: string;
   messages: ChatMessage[];
   updatedAt: string;
+  /** Backend session id so Baymax remembers the conversation. */
+  sessionId?: string;
 }
 
 /* ---------- Health education ---------- */

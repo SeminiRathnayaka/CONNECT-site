@@ -10,9 +10,11 @@ import {
   Trash2,
   UploadCloud,
 } from 'lucide-react';
-import type { LabResult, TermExplanation } from '../../types';
+import type { LabResult } from '../../types';
+import type { Language } from '../../lib/api';
 import { cn } from '../../utils/cn';
 import { buttonClass } from '../../components/ui/Button';
+import { LanguageToggle } from '../../components/ui/LanguageToggle';
 
 /* ------------------------------------------------------------------ */
 /* Upload zone                                                         */
@@ -21,9 +23,12 @@ import { buttonClass } from '../../components/ui/Button';
 export interface PickedFile {
   name: string;
   sizeKB: number;
+  /** The real file, so it can actually be uploaded to Orayan. */
+  file: File;
 }
 
 const ACCEPTED = ['pdf', 'png', 'jpg', 'jpeg'];
+const MAX_BYTES = 12 * 1024 * 1024;
 
 interface DropZoneProps {
   file: PickedFile | null;
@@ -42,8 +47,8 @@ export function DropZone({ file, onFile, onClear }: DropZoneProps) {
       setError('Unsupported file. Please upload a PDF, PNG, JPG or JPEG.');
       return false;
     }
-    if (sizeBytes > 15 * 1024 * 1024) {
-      setError('File is larger than 15 MB. Please upload a smaller document.');
+    if (sizeBytes > MAX_BYTES) {
+      setError('File is larger than 12 MB. Please upload a smaller document.');
       return false;
     }
     setError('');
@@ -54,7 +59,11 @@ export function DropZone({ file, onFile, onClear }: DropZoneProps) {
     const first = files?.[0];
     if (!first) return;
     if (!validate(first.name, first.size)) return;
-    onFile({ name: first.name, sizeKB: Math.max(Math.round(first.size / 1024), 1) });
+    onFile({
+      name: first.name,
+      sizeKB: Math.max(Math.round(first.size / 1024), 1),
+      file: first,
+    });
   };
 
   const onDrop = (e: DragEvent<HTMLDivElement>) => {
@@ -122,7 +131,7 @@ export function DropZone({ file, onFile, onClear }: DropZoneProps) {
           </p>
           <p className="mt-1 text-xs text-ink-500 sm:text-sm">
             or <span className="font-semibold text-primary-600">browse files</span> — PDF, PNG,
-            JPG up to 15 MB
+            JPG up to 12 MB
           </p>
         </div>
 
@@ -136,7 +145,8 @@ export function DropZone({ file, onFile, onClear }: DropZoneProps) {
       </div>
 
       <p className="mt-3 text-center text-xs text-ink-400">
-        Your file stays on this device — only its name and size are shared with the AI model.
+        Your report is uploaded to your own AI server so the values can be read. It is never shared
+        with any third-party service.
       </p>
 
       {error ? (
@@ -252,30 +262,34 @@ export function AnalysisProgress({
 
 interface ResultCardProps {
   result: LabResult;
-  term?: TermExplanation;
-  language: 'en' | 'si';
-  onLanguageChange: (lang: 'en' | 'si') => void;
+  language: Language;
+  onLanguageChange: (lang: Language) => void;
   expanded: boolean;
-  onToggle: () => void;
+  onExplain: () => void;
+  onHide: () => void;
+  explanationError?: string | null;
 }
 
 export function ResultCard({
   result,
-  term,
   language,
   onLanguageChange,
   expanded,
-  onToggle,
+  onExplain,
+  onHide,
+  explanationError,
 }: ResultCardProps) {
   const zoneLow = result.refLow;
   const zoneHigh = result.refHigh;
-  const visualLow = Math.min(zoneLow, result.value * 0.75);
-  const visualHigh = Math.max(zoneHigh, result.value * 1.15);
+  const hasRange = zoneLow !== null && zoneHigh !== null;
+
+  const visualLow = hasRange ? Math.min(zoneLow, result.value * 0.75) : result.value * 0.75;
+  const visualHigh = hasRange ? Math.max(zoneHigh, result.value * 1.15) : result.value * 1.15;
   const span = visualHigh - visualLow || 1;
   const clamp = (v: number) => Math.min(Math.max(((v - visualLow) / span) * 100, 0), 100);
 
-  const zoneLeft = clamp(zoneLow);
-  const zoneWidth = clamp(zoneHigh) - zoneLeft;
+  const zoneLeft = hasRange ? clamp(zoneLow) : 0;
+  const zoneWidth = hasRange ? clamp(zoneHigh) - zoneLeft : 0;
   const marker = clamp(result.value);
 
   const statusTone =
@@ -311,7 +325,7 @@ export function ResultCard({
         </div>
         <div className="text-right">
           <p className="text-lg font-bold text-ink-900">
-            {result.value}
+            {result.valueText}
             <span className="ml-1 text-xs font-medium text-ink-500">{result.unit}</span>
           </p>
           <span
@@ -328,84 +342,95 @@ export function ResultCard({
 
       {/* Range visual */}
       <div className="mt-3.5">
-        <div className="relative h-2 rounded-full bg-ink-100">
-          <div
-            className="absolute inset-y-0 rounded-full bg-ok-100"
-            style={{ left: `${zoneLeft}%`, width: `${zoneWidth}%` }}
-          />
-          <span
-            className="absolute -top-1 h-4 w-1.5 rounded-full shadow"
-            style={{ left: `${marker}%`, background: markerColor }}
-            aria-hidden
-          />
-        </div>
-        <div className="mt-1.5 flex justify-between text-[11px] text-ink-400">
-          <span>
-            {result.refLow} {result.unit}
-          </span>
+        {hasRange ? (
+          <div className="relative h-2 rounded-full bg-ink-100">
+            <div
+              className="absolute inset-y-0 rounded-full bg-ok-100"
+              style={{ left: `${zoneLeft}%`, width: `${zoneWidth}%` }}
+            />
+            <span
+              className="absolute -top-1 h-4 w-1.5 rounded-full shadow"
+              style={{ left: `${marker}%`, background: markerColor }}
+              aria-hidden
+            />
+          </div>
+        ) : (
+          <p className="rounded-xl bg-ink-50 px-3 py-2 text-[11px] text-ink-500">
+            No numeric reference range was printed for this test, so Orayan cannot judge whether it
+            is within range.
+          </p>
+        )}
+        <div className="mt-1.5 flex justify-between gap-2 text-[11px] text-ink-400">
+          <span>{hasRange ? `${result.refLow} ${result.unit}` : ''}</span>
           <span className="font-semibold text-ink-600">Reference: {result.reference}</span>
-          <span>
-            {result.refHigh} {result.unit}
-          </span>
+          <span>{hasRange ? `${result.refHigh} ${result.unit}` : ''}</span>
         </div>
       </div>
 
-      {term ? (
-        <div className="mt-3 border-t border-ink-100 pt-3">
-          {!expanded ? (
+      <div className="mt-3 border-t border-ink-100 pt-3">
+        {!expanded ? (
+          <button
+            type="button"
+            onClick={onExplain}
+            disabled={result.explanationLoading}
+            className="inline-flex items-center gap-1.5 rounded-full border border-primary-100 bg-primary-50 px-3 py-1.5 text-xs font-bold text-primary-700 transition hover:bg-primary-100 disabled:opacity-60"
+          >
+            {result.explanationLoading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin-slow" aria-hidden />
+            ) : (
+              <Languages className="h-3.5 w-3.5" aria-hidden />
+            )}
+            {result.explanationLoading ? 'Explaining…' : 'Explain simply'}
+          </button>
+        ) : (
+          <div className="animate-fade-in rounded-xl border border-primary-100 bg-primary-50/60 p-3.5">
+            <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-bold text-primary-700">{result.name}</p>
+              <LanguageToggle
+                value={language}
+                onChange={onLanguageChange}
+                className="text-[10px]"
+              />
+            </div>
+
+            {result.explanationLoading ? (
+              <div className="space-y-2">
+                <p className="flex items-center gap-2 text-xs text-ink-500">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin-slow" aria-hidden />
+                  Orayan is writing this explanation…
+                </p>
+                <div className="h-2.5 w-full animate-pulse-soft rounded-full bg-white/80" />
+                <div className="h-2.5 w-4/5 animate-pulse-soft rounded-full bg-white/80" />
+              </div>
+            ) : explanationError ? (
+              <p className="flex items-start gap-2 text-xs leading-relaxed text-alert-600">
+                <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                {explanationError}
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {(result.explanation ?? '')
+                  .split(/\n{2,}/)
+                  .map((p) => p.trim())
+                  .filter(Boolean)
+                  .map((p, i) => (
+                    <p key={`${i}-${p.slice(0, 20)}`} className="text-xs leading-relaxed text-ink-700">
+                      {p}
+                    </p>
+                  ))}
+              </div>
+            )}
+
             <button
               type="button"
-              onClick={onToggle}
-              className="inline-flex items-center gap-1.5 rounded-full border border-primary-100 bg-primary-50 px-3 py-1.5 text-xs font-bold text-primary-700 transition hover:bg-primary-100"
+              onClick={onHide}
+              className="mt-2.5 text-[11px] font-bold text-primary-600 hover:underline"
             >
-              <Languages className="h-3.5 w-3.5" aria-hidden />
-              Explain simply
+              Hide explanation
             </button>
-          ) : (
-            <div className="animate-fade-in rounded-xl border border-primary-100 bg-primary-50/60 p-3.5">
-              <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
-                <p className="text-xs font-bold text-primary-700">{term.term}</p>
-                <div className="flex rounded-full border border-primary-100 bg-white/80 p-0.5 text-[11px] font-bold">
-                  {(['en', 'si'] as const).map((lang) => (
-                    <button
-                      key={lang}
-                      type="button"
-                      onClick={() => onLanguageChange(lang)}
-                      className={cn(
-                        'rounded-full px-2.5 py-1 transition',
-                        language === lang
-                          ? 'bg-primary-600 text-white'
-                          : 'text-ink-500 hover:text-primary-600',
-                      )}
-                      aria-pressed={language === lang}
-                    >
-                      {lang === 'en' ? 'English' : 'සිංහල'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <p className="text-xs leading-relaxed text-ink-700">
-                <span className="font-semibold text-ink-800">Technical:</span> {term.technical}
-              </p>
-              <p className="mt-2 text-xs leading-relaxed text-ink-700">
-                <span className="font-semibold text-ink-800">
-                  {language === 'en' ? 'Simple English:' : 'සිංහලෙන්:'}
-                </span>{' '}
-                {language === 'en' ? term.simple : term.sinhala}
-              </p>
-
-              <button
-                type="button"
-                onClick={onToggle}
-                className="mt-2.5 text-[11px] font-bold text-primary-600 hover:underline"
-              >
-                Hide explanation
-              </button>
-            </div>
-          )}
-        </div>
-      ) : null}
+          </div>
+        )}
+      </div>
     </article>
   );
 }

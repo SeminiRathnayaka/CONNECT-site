@@ -15,7 +15,7 @@ import { Badge } from '../../components/ui/Badge';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { buttonClass } from '../../components/ui/Button';
 import { useFamily } from '../../hooks/useFamily';
-import { isAiConfigured, NOT_CONNECTED_NOTICE } from '../../services/ai';
+import { useAiStatus } from '../../hooks/useAiStatus';
 import { formatDate, relativeDay } from '../../utils/dates';
 
 /* ------------------------------------------------------------------ */
@@ -151,14 +151,16 @@ export function CurrentMedications({ medications }: { medications: Medication[] 
 /* AI insights                                                         */
 /* ------------------------------------------------------------------ */
 export function AiInsights() {
-  const configured = isAiConfigured();
+  const { online } = useAiStatus(60000);
 
   return (
     <EmptyState
-      title={configured ? 'No insights yet' : 'AI insights'}
-      description={configured
-        ? 'Insights will appear once your model analyzes your data.'
-        : NOT_CONNECTED_NOTICE}
+      title={online ? 'No insights yet' : 'AI insights'}
+      description={
+        online
+          ? 'Insights will appear once Orayan has analyzed a report for you.'
+          : 'The AI server is not running. Start it with "npm run dev" to see insights here.'
+      }
       action={
         <Link to="/baymax" className={buttonClass('soft', 'sm')}>
           Ask Baymax
