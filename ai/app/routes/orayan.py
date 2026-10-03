@@ -1,9 +1,9 @@
 ﻿import logging
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-from app.services import db, orayan as orayan_service, supabase_auth
+from app.services import orayan as orayan_service, supabase_auth
 from app.services.extract import ExtractionError, extract_text
 from app.services.parser import parse_report, summarise
 
@@ -13,9 +13,30 @@ router = APIRouter(prefix="/api/orayan", tags=["orayan"])
 
 MAX_FILENAME = 200
 
+# A lab report is small, but this stops a crafted request from sending an
+# enormous payload that would be pasted into a prompt.
+MAX_REPORT_TEXT = 20_000
 
-class ExplainRequest(BaseModel):
-    report_id: str
+
+def _counts(tests: list[dict], supplied: dict) -> dict:
+    """Trusts the app's counts when it sent them, otherwise works them out."""
+    return supplied or summarise(tests)
+
+
+class ReportContext(BaseModel):
+    """The parsed report, sent by the app because the service keeps no copy.
+
+    Supabase stores the report; this only carries enough of it for Gemini to
+    answer questions. Anything absent simply makes the answer more general.
+    """
+
+    filename: str = Field(default="", max_length=200)
+    tests: list[dict] = Field(default_factory=list)
+    counts: dict = Field(default_factory=dict)
+    summary_text: str = ""
+
+
+class ExplainRequest(ReportContext):
     test_name: str = Field(min_length=1, max_length=200)
     language: str = "en"
 
@@ -24,13 +45,12 @@ class TermRequest(BaseModel):
     term: str = Field(min_length=1, max_length=120)
 
 
-class AskRequest(BaseModel):
-    report_id: str
+class AskRequest(ReportContext):
     question: str = Field(min_length=1, max_length=2000)
+    language: str = "en"
 
 
-class SummaryRequest(BaseModel):
-    report_id: str
+class SummaryRequest(ReportContext):
     language: str = "en"
 
 
@@ -45,20 +65,13 @@ def _fail(error, status: int = 400) -> HTTPException:
     return HTTPException(status_code=status, detail=message)
 
 
-def _reraise(error, status: int = 502) -> None:
-    """Turns a service error into an HTTP error, 404 when the report is gone."""
-    if isinstance(error, orayan_service.ReportNotFound):
-        raise _fail(error, status=404) from error
-    raise _fail(error, status=status) from error
-
-
 @router.post("/upload")
 async def upload(
     file: UploadFile = File(...),
     language: str = Form("en"),
     user: dict = Depends(supabase_auth.current_user),
 ):
-    user_id = user["id"]
+    del user
     language = _normalise_language(language)
     filename = (file.filename or "report")[:MAX_FILENAME]
 
@@ -79,27 +92,25 @@ async def upload(
             "If it is a scan, please try uploading a clear image of the report."
         )
 
-    # Old reports outside the retention window are cleared on upload, so the
-    # 3-month history cannot grow without limit.
-    db.prune_reports(user_id)
-    report_id = orayan_service.save_report(filename, text, source, tests, user_id=user_id)
+    counts = summarise(tests)
 
+    # The report itself is not stored here. The app saves it in Supabase and
+    # sends the parsed rows back with any later question.
     summary_text = ""
     summary_error = None
     try:
-        summary_text = orayan_service.generate_summary(report_id, language, user_id=user_id)
+        summary_text = orayan_service.generate_summary(tests, counts, language)
     except orayan_service.OrayanError as error:
         summary_error = str(error)
         logger.warning("Summary unavailable for %s: %s", filename, summary_error)
 
     return {
-        "report_id": report_id,
         "filename": filename,
         "source": source,
         "was_image": was_image,
         "language": language,
         "tests": tests,
-        "counts": summarise(tests),
+        "counts": counts,
         "summary_text": summary_text,
         "summary_error": summary_error,
     }
@@ -107,39 +118,31 @@ async def upload(
 
 @router.post("/summary")
 def summary(payload: SummaryRequest, user: dict = Depends(supabase_auth.current_user)):
-    user_id = user["id"]
+    del user  # The account is checked; Supabase already holds the report itself.
     language = _normalise_language(payload.language)
-    try:
-        record = orayan_service.get_report(payload.report_id, user_id=user_id)
-        cached = orayan_service.get_summary_text(payload.report_id, language, user_id=user_id)
-        if cached:
-            return {
-                "report_id": payload.report_id,
-                "language": language,
-                "summary_text": cached,
-                "counts": record["summary"],
-            }
-        text = orayan_service.generate_summary(payload.report_id, language, user_id=user_id)
-    except orayan_service.OrayanError as error:
-        _reraise(error)
+    counts = _counts(payload.tests, payload.counts)
 
-    return {
-        "report_id": payload.report_id,
-        "language": language,
-        "summary_text": text,
-        "counts": record["summary"],
-    }
+    try:
+        text = orayan_service.generate_summary(payload.tests, counts, language)
+    except orayan_service.OrayanError as error:
+        raise _fail(error, status=502) from error
+
+    return {"language": language, "summary_text": text, "counts": counts}
 
 
 @router.post("/explain")
 def explain(payload: ExplainRequest, user: dict = Depends(supabase_auth.current_user)):
+    del user
     language = _normalise_language(payload.language)
     try:
         text = orayan_service.explain_test(
-            payload.report_id, payload.test_name, language, user_id=user["id"]
+            payload.tests,
+            payload.test_name,
+            payload.summary_text[:MAX_REPORT_TEXT],
+            language,
         )
     except orayan_service.OrayanError as error:
-        _reraise(error)
+        raise _fail(error, status=502) from error
 
     return {"test_name": payload.test_name, "language": language, "explanation": text}
 
@@ -153,6 +156,7 @@ def term(
     # Definitions are shared reference text so no report is involved, but the
     # endpoint still needs an account: otherwise anyone who finds the address
     # could spend the Gemini quota.
+    del user
     language = _normalise_language(language)
     try:
         text = orayan_service.explain_term(payload.term, language)
@@ -164,52 +168,18 @@ def term(
 
 @router.post("/ask")
 def ask(payload: AskRequest, language: str = "en", user: dict = Depends(supabase_auth.current_user)):
+    del user
     language = _normalise_language(language)
     try:
         text = orayan_service.ask_about_report(
-            payload.report_id, payload.question, language, user_id=user["id"]
+            payload.filename,
+            payload.tests,
+            _counts(payload.tests, payload.counts),
+            payload.question,
+            payload.summary_text[:MAX_REPORT_TEXT],
+            language,
         )
     except orayan_service.OrayanError as error:
-        _reraise(error)
+        raise _fail(error, status=502) from error
 
     return {"question": payload.question, "language": language, "answer": text}
-
-
-@router.get("/reports")
-def list_reports(
-    limit: int = Query(50, ge=1, le=200),
-    user: dict = Depends(supabase_auth.current_user),
-):
-    return {"reports": orayan_service.list_reports(limit, user_id=user["id"])}
-
-
-@router.get("/reports/{report_id}")
-def get_report(
-    report_id: str,
-    language: str = "en",
-    user: dict = Depends(supabase_auth.current_user),
-):
-    user_id = user["id"]
-    language = _normalise_language(language)
-    try:
-        record = orayan_service.get_report(report_id, user_id=user_id)
-    except orayan_service.OrayanError as error:
-        _reraise(error)
-
-    return {
-        "report_id": record["report_id"],
-        "filename": record["filename"],
-        "source": record["source"],
-        "created_at": record["created_at"],
-        "language": language,
-        "tests": record["tests"],
-        "counts": record["summary"],
-        "summary_text": orayan_service.get_summary_text(report_id, language, user_id=user_id),
-    }
-
-
-@router.delete("/reports/{report_id}")
-def delete_report(report_id: str, user: dict = Depends(supabase_auth.current_user)):
-    if not orayan_service.delete_report(report_id, user_id=user["id"]):
-        raise HTTPException(status_code=404, detail="That report could not be found.")
-    return {"ok": True}

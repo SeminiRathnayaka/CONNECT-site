@@ -122,6 +122,15 @@ export interface MedicalReport {
     flaggedTotal: number;
   };
   summaryText?: string;
+    /**
+     * The rows exactly as the parser produced them.
+     *
+     * Kept because follow-up questions are answered by the AI service, which
+     * stores nothing of its own, so the app has to send the report with them.
+     */
+    rawTests?: Record<string, unknown>[];
+    /** The parser's own counts, kept in the shape the service expects. */
+    rawCounts?: Record<string, unknown>;
 }
 
 /* ---------- Medications ---------- */

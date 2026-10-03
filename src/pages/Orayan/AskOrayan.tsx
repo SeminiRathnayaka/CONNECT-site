@@ -1,10 +1,11 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import { Bot, Loader2, MessageCircleQuestion, Send, Sparkles } from 'lucide-react';
-import { ApiError, askAboutReport } from '../../lib/api';
+import { ApiError, askAboutReport, reportContext } from '../../lib/api';
 import type { Language } from '../../lib/api';
 import { cn } from '../../utils/cn';
 import { LanguageToggle } from '../../components/ui/LanguageToggle';
 import { ReportMarkdown } from '../../components/ui/ReportMarkdown';
+import type { MedicalReport } from '../../types';
 
 const SUGGESTIONS: Record<Language, string[]> = {
   en: [
@@ -32,16 +33,16 @@ interface Turn {
  * specific report as context.
  */
 export function AskOrayan({
-  reportId,
-  reportName,
+  report,
   language,
   onLanguageChange,
 }: {
-  reportId: string;
-  reportName: string;
+  /** The whole report, because the AI service keeps no copy of its own. */
+  report: MedicalReport;
   language: Language;
   onLanguageChange: (language: Language) => void;
 }) {
+  const reportName = report.fileName;
   const [turns, setTurns] = useState<Turn[]>([]);
   const [question, setQuestion] = useState('');
   const [loading, setLoading] = useState(false);
@@ -57,7 +58,7 @@ export function AskOrayan({
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
     try {
-      const result = await askAboutReport(reportId, text, language);
+      const result = await askAboutReport(reportContext(report), text, language);
       setTurns((prev) => [
         ...prev,
         { id, question: text, answer: result.answer },

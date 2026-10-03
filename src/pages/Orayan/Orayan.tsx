@@ -13,7 +13,7 @@ import {
   User,
 } from 'lucide-react';
 import type { LabResult, MedicalReport } from '../../types';
-import { ApiError, explainTest, getReportSummary, uploadReport } from '../../lib/api';
+import { ApiError, explainTest, getReportSummary, reportContext, uploadReport } from '../../lib/api';
 import type { Language, TestCounts } from '../../lib/api';
 import { useAiStatus } from '../../hooks/useAiStatus';
 import { useReports } from '../../hooks/useReports';
@@ -58,14 +58,17 @@ function toStoredCounts(counts: TestCounts) {
 }
 
 function toMedicalReport(
-  response: Awaited<ReturnType<typeof uploadReport>>,
-  results: LabResult[],
-  patient: string,
-): MedicalReport {
-  const isImage = response.source === 'image';
-  return {
-    id: response.report_id,
-    reportId: response.report_id,
+    response: Awaited<ReturnType<typeof uploadReport>>,
+    results: LabResult[],
+    patient: string,
+  ): MedicalReport {
+    const isImage = response.source === 'image';
+    // The AI service keeps no reports, so this id belongs to the Supabase row
+    // and is generated here.
+    const id = crypto.randomUUID();
+    return {
+      id,
+      reportId: id,
     fileName: response.filename,
     type: isImage ? 'Scanned Report' : 'Lab Report',
     date: todayISO(),
@@ -74,9 +77,11 @@ function toMedicalReport(
     results,
     explainedTerms: results.filter((r) => r.explanation).length,
     uploadedAt: todayISO(),
-    counts: toStoredCounts(response.counts),
-    summaryText: response.summary_text,
-  };
+counts: toStoredCounts(response.counts),
+      summaryText: response.summary_text,
+      rawTests: response.tests as unknown as Record<string, unknown>[],
+      rawCounts: response.counts as unknown as Record<string, unknown>,
+    };
 }
 
 export default function Orayan() {
@@ -184,7 +189,7 @@ export default function Orayan() {
 
     setSummaryBusy(true);
     try {
-      const response = await getReportSummary(report.reportId, next);
+      const response = await getReportSummary(reportContext(report), next);
       setAnalysisText(response.summary_text || null);
       setReport((prev) => (prev ? { ...prev, summaryText: response.summary_text } : prev));
     } catch {
@@ -257,7 +262,7 @@ export default function Orayan() {
         : prev,
     );
 
-    void explainTest(report!.reportId, result.name, language)
+    void explainTest(reportContext(report!), result.name, language)
       .then((response) => applyExplanation(response.explanation))
       .catch((err: unknown) => {
         setReport((prev) =>
@@ -596,8 +601,7 @@ export default function Orayan() {
 
               {/* Level 3 — ask questions about this report */}
               <AskOrayan
-                reportId={report.reportId}
-                reportName={report.fileName}
+                report={report}
                 language={language}
                 onLanguageChange={(next) => void changeLanguage(next)}
               />

@@ -1,5 +1,4 @@
 import os
-from contextlib import asynccontextmanager
 
 import uvicorn
 from dotenv import load_dotenv
@@ -17,17 +16,10 @@ load_dotenv(
 
 from app.routes.chat import router as chat_router  # noqa: E402
 from app.routes.orayan import router as orayan_router  # noqa: E402
-from app.services import db  # noqa: E402
 
-
-@asynccontextmanager
-async def lifespan(_: FastAPI):
-    # Connect to Postgres and clear anything expired while the server was down.
-    db.init_db()
-    yield
-
-
-app = FastAPI(title="CONNECT AI", version="3.0.0", lifespan=lifespan)
+# There is no database start-up step any more: Supabase holds every account and
+# report, so the service starts even when nothing else is running.
+app = FastAPI(title="CONNECT AI", version="3.1.0")
 
 # Sign-in is handled by Supabase, and the browser sends a bearer token rather
 # than a cookie, so requests no longer need credentials. The origins are still
@@ -61,12 +53,11 @@ app.include_router(orayan_router)
 
 @app.get("/health", tags=["meta"])
 def health():
-    supabase_url = (os.getenv("SUPABASE_URL") or "").strip()
     return {
         "status": "ok",
         "model_configured": bool(os.getenv("GEMINI_API_KEY")),
-        "supabase_configured": bool(supabase_url),
-        "database": "postgresql",
+        "supabase_configured": bool((os.getenv("SUPABASE_URL") or "").strip()),
+        "storage": "supabase",
     }
 
 

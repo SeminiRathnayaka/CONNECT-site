@@ -43,6 +43,10 @@ function reportFromRow(row: ReportRow): MedicalReport {
     uploadedAt: row.created_at.slice(0, 10),
     counts: stored.counts,
     summaryText: stored.summaryText,
+    // Carried through so follow-up questions can be answered without the AI
+    // service keeping a copy of the report.
+    rawTests: stored.rawTests,
+    rawCounts: stored.rawCounts,
   };
 }
 

@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -8,10 +8,10 @@ import {
   ScanLine,
   User,
 } from 'lucide-react';
-import { ApiError, explainTest, getReport, getReportSummary } from '../../lib/api';
+import { ApiError, explainTest, getReportSummary, reportContext } from '../../lib/api';
 import type { Language } from '../../lib/api';
-import { toLabResult } from '../../lib/api';
 import type { LabResult } from '../../types';
+import { useReports } from '../../hooks/useReports';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { GlassCard } from '../../components/ui/GlassCard';
 import { EmptyState } from '../../components/ui/EmptyState';
@@ -27,43 +27,20 @@ import { cn } from '../../utils/cn';
 export default function ReportDetail() {
   const { reportId } = useParams();
   const [language, setLanguage] = useState<Language>('en');
+  // The report lives in Supabase, so it is read from there rather than asked
+  // of the AI service, which stores nothing.
+  const { reports, loading, error: loadError } = useReports();
+  const report = reports.find((item) => item.id === reportId) ?? null;
   const [results, setResults] = useState<LabResult[]>([]);
-  const [meta, setMeta] = useState<{
-    filename: string;
-    source: string;
-    created_at: string;
-    summary_text: string;
-  } | null>(null);
   const [summary, setSummary] = useState('');
   const [expanded, setExpanded] = useState<string[]>([]);
   const [explanationErrors, setExplanationErrors] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    if (!reportId) return;
-    setLoading(true);
-    try {
-      const response = await getReport(reportId, language);
-      setResults(response.tests.map(toLabResult));
-      setMeta({
-        filename: response.filename,
-        source: response.source,
-        created_at: response.created_at,
-        summary_text: response.summary_text,
-      });
-      setSummary(response.summary_text);
-      setLoadError(null);
-    } catch (err) {
-      setLoadError(err instanceof ApiError ? err.message : 'Could not load that report.');
-    } finally {
-      setLoading(false);
-    }
-  }, [reportId, language]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (!report) return;
+    setResults(report.results);
+    setSummary(report.summaryText ?? '');
+  }, [report]);
 
   /* Refresh just the summary when switching language, so the values do not flicker. */
   const changeLanguage = async (next: Language) => {
@@ -73,9 +50,9 @@ export default function ReportDetail() {
     );
     setExpanded([]);
     setExplanationErrors({});
-    if (!reportId) return;
+    if (!report) return;
     try {
-      const response = await getReportSummary(reportId, next);
+      const response = await getReportSummary(reportContext(report), next);
       setSummary(response.summary_text);
     } catch {
       /* keep whatever is already shown */
@@ -88,13 +65,13 @@ export default function ReportDetail() {
       return;
     }
     setExpanded((prev) => [...prev, result.id]);
-    if (result.explanation || !reportId) return;
+    if (result.explanation || !report) return;
 
     setResults((prev) =>
       prev.map((r) => (r.id === result.id ? { ...r, explanationLoading: true } : r)),
     );
 
-    void explainTest(reportId, result.name, language)
+    void explainTest(reportContext(report), result.name, language)
       .then((response) =>
         setResults((prev) =>
           prev.map((r) =>
@@ -124,7 +101,7 @@ export default function ReportDetail() {
     );
   }
 
-  if (loadError || !meta) {
+  if (loadError || !report) {
     return (
       <div className="page-container py-10">
         <EmptyState
@@ -142,7 +119,7 @@ export default function ReportDetail() {
 
   const counts = countByStatus(results);
   const withinRange = counts.normal + counts.attention;
-  const reportType = meta.source === 'image' ? 'Scanned Report' : 'Lab Report';
+  const reportType = report.type;
 
   return (
     <div className="page-container py-6 sm:py-8">
@@ -156,8 +133,8 @@ export default function ReportDetail() {
 
       <PageHeader
         eyebrow={reportType}
-        title={meta.filename}
-        description={`Uploaded ${formatDate(meta.created_at.slice(0, 10))}`}
+        title={report.fileName}
+        description={`Uploaded ${formatDate(report.uploadedAt)}`}
         icon={<ScanLine className="h-6 w-6" aria-hidden />}
         actions={
           <>
@@ -175,7 +152,7 @@ export default function ReportDetail() {
       {/* Overview */}
       <GlassCard className="mb-4">
         <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Info icon={<Calendar className="h-4 w-4" />} label="Uploaded" value={formatDate(meta.created_at.slice(0, 10))} />
+          <Info icon={<Calendar className="h-4 w-4" />} label="Uploaded" value={formatDate(report.uploadedAt)} />
           <Info icon={<ScanLine className="h-4 w-4" />} label="Report type" value={reportType} />
           <Info icon={<FlaskConical className="h-4 w-4" />} label="Values read" value={String(results.length)} />
           <Info icon={<User className="h-4 w-4" />} label="Reference" value={reportId?.slice(0, 8) ?? '—'} />

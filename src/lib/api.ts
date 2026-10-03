@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Client for the CONNECT AI backend (ai/app/server.py).
  *
  * In development Vite proxies /api and /health to http://127.0.0.1:8000, so
@@ -77,7 +77,6 @@ export interface TestCounts {
 }
 
 export interface UploadResponse {
-  report_id: string
   filename: string
   source: string
   was_image: boolean
@@ -89,7 +88,6 @@ export interface UploadResponse {
 }
 
 export interface ReportSummaryResponse {
-  report_id: string
   language: Language
   summary_text: string
   counts: TestCounts
@@ -98,25 +96,6 @@ export interface ReportSummaryResponse {
 export interface ChatResponse {
   reply: string
   language: Language
-}
-
-export interface ReportListItem {
-  report_id: string
-  filename: string
-  source: string
-  created_at: string
-  summary: TestCounts
-}
-
-export interface ReportDetail {
-  report_id: string
-  filename: string
-  source: string
-  created_at: string
-  language: Language
-  tests: LabTest[]
-  counts: TestCounts
-  summary_text: string
 }
 
 export interface HealthResponse {
@@ -340,23 +319,46 @@ export function uploadReport(
   })
 }
 
+/**
+ * The report context every follow-up question needs.
+ *
+ * The AI service stores nothing, so the app sends the parsed rows each time.
+ * Supabase remains the one place the report is actually kept.
+ */
+export interface ReportContext {
+  filename: string;
+  tests: Record<string, unknown>[];
+  counts: Record<string, unknown>;
+  summary_text: string;
+}
+
+/** Builds that context from a stored report. */
+export function reportContext(report: MedicalReport): ReportContext {
+  return {
+    filename: report.fileName,
+    tests: report.rawTests ?? [],
+    counts: report.rawCounts ?? {},
+    summary_text: report.summaryText ?? '',
+  }
+}
+
 export function getReportSummary(
-  reportId: string,
+  context: ReportContext,
   language: Language,
 ): Promise<ReportSummaryResponse> {
   return postJson<ReportSummaryResponse>('/api/orayan/summary', {
-    report_id: reportId,
+    ...context,
     language,
   })
 }
 
 export function explainTest(
-  reportId: string,
+  context: ReportContext,
   testName: string,
   language: Language,
 ): Promise<{ test_name: string; language: Language; explanation: string }> {
   return postJson('/api/orayan/explain', {
-    report_id: reportId,
+    ...context,
     test_name: testName,
     language,
   })
@@ -370,30 +372,13 @@ export function explainTerm(
 }
 
 export function askAboutReport(
-  reportId: string,
+  context: ReportContext,
   question: string,
   language: Language,
 ): Promise<{ question: string; language: Language; answer: string }> {
   return postJson(`/api/orayan/ask?language=${language}`, {
-    report_id: reportId,
+    ...context,
     question,
-  })
-}
-
-export function listReports(): Promise<{ reports: ReportListItem[] }> {
-  return request<{ reports: ReportListItem[] }>('/api/orayan/reports')
-}
-
-export function getReport(
-  reportId: string,
-  language: Language,
-): Promise<ReportDetail> {
-  return request<ReportDetail>(`/api/orayan/reports/${reportId}?language=${language}`)
-}
-
-export function deleteReport(reportId: string): Promise<{ ok: boolean }> {
-  return request<{ ok: boolean }>(`/api/orayan/reports/${reportId}`, {
-    method: 'DELETE',
   })
 }
 
@@ -401,7 +386,7 @@ export function deleteReport(reportId: string): Promise<{ ok: boolean }> {
 /* Mapping backend tests onto the UI's LabResult model                */
 /* ------------------------------------------------------------------ */
 
-import type { LabResult, ValueStatus } from '../types'
+import type { LabResult, MedicalReport, ValueStatus } from '../types'
 import { isSupabaseConfigured, supabase } from './supabase'
 
 /**

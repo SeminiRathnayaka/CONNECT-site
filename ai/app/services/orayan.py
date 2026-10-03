@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+import hashlib
+import json
 import os
 
 import google.generativeai as genai
@@ -12,7 +16,6 @@ from app.prompts.orayan import (
     build_summary_prompt,
     language_rule,
 )
-from app.services import db
 from app.services.parser import summarise
 
 load_dotenv()
@@ -26,14 +29,35 @@ class OrayanError(Exception):
     pass
 
 
-class ReportNotFound(OrayanError):
-    """The report does not exist, or belongs to another account.
+# --------------------------------------------------------------------------
+# Answer cache
+# --------------------------------------------------------------------------
+# The service keeps no reports of its own: Supabase is the only place a report
+# lives. That means a summary or an explanation has to be worked out again when
+# somebody reopens a report, which would spend the Gemini allowance every time.
+#
+# So finished answers are held in memory for a while. The key is a hash of the
+# report text that produced them, not the report id, so two different reports
+# can never be given each other's answers.
+_CACHE: dict[str, str] = {}
+_CACHE_LIMIT = 200
 
-    A separate type so routes can answer 404 without matching on message text,
-    which silently turned into 502 whenever the wording changed. The message
-    stays vague on purpose: saying "not yours" would confirm that somebody
-    else's report id exists.
-    """
+
+def _key(*parts: str) -> str:
+    joined = "\u0000".join(parts)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+
+
+def _cached(key: str) -> str:
+    return _CACHE.get(key, "")
+
+
+def _remember(key: str, text: str) -> str:
+    if len(_CACHE) >= _CACHE_LIMIT:
+        # Plain dicts keep insertion order, so the oldest answer goes first.
+        _CACHE.pop(next(iter(_CACHE)), None)
+    _CACHE[key] = text
+    return text
 
 
 def _model(system_instruction: str):
@@ -49,31 +73,6 @@ def _model(system_instruction: str):
 def _require_api_key() -> None:
     if not os.getenv("GEMINI_API_KEY"):
         raise OrayanError("GEMINI_API_KEY is not configured on the server.")
-
-
-def save_report(
-    filename: str,
-    text: str,
-    source: str,
-    tests: list[dict],
-    user_id: str | None = None,
-) -> str:
-    return db.save_report(filename, text, source, tests, summarise(tests), user_id=user_id)
-
-
-def get_report(report_id: str, user_id: str | None = None) -> dict:
-    record = db.get_report(report_id, user_id=user_id)
-    if not record:
-        raise ReportNotFound("That report is no longer available. Please upload it again.")
-    return record
-
-
-def list_reports(limit: int = 50, user_id: str | None = None) -> list[dict]:
-    return db.list_reports(limit, user_id=user_id)
-
-
-def delete_report(report_id: str, user_id: str | None = None) -> bool:
-    return db.delete_report(report_id, user_id=user_id)
 
 
 RATE_LIMIT_HINT = (
@@ -131,83 +130,80 @@ def _tests_block(tests: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def generate_summary(report_id: str, language: str, user_id: str | None = None) -> str:
-    record = get_report(report_id, user_id=user_id)
-    tests, summary = record["tests"], record["summary"]
-
+def generate_summary(tests: list[dict], counts: dict, language: str) -> str:
     if not tests:
         raise OrayanError(
             "No test rows could be read from that report. "
             "If it is a scan, please try uploading it as a clear image instead."
         )
 
-    cached = db.get_summary_text(report_id, language)
-    if cached:
-        return cached
+    cache_key = _key("summary", language, json.dumps(tests, sort_keys=True, default=str))
+    hit = _cached(cache_key)
+    if hit:
+        return hit
 
     text = _generate(
         ORAYAN_PERSONALITY,
-        build_summary_prompt(tests, summary),
+        build_summary_prompt(tests, counts),
         language,
     )
-    db.set_summary_text(report_id, language, text)
-    return text
-
-
-def get_summary_text(report_id: str, language: str, user_id: str | None = None) -> str:
-    get_report(report_id, user_id=user_id)
-    return db.get_summary_text(report_id, language)
+    return _remember(cache_key, text)
 
 
 def explain_test(
-    report_id: str, test_name: str, language: str, user_id: str | None = None
+    tests: list[dict], test_name: str, summary_text: str, language: str
 ) -> str:
-    record = get_report(report_id, user_id=user_id)
     test = next(
-        (item for item in record["tests"] if item["name"].lower() == test_name.lower()),
+        (item for item in tests if str(item.get("name", "")).lower() == test_name.lower()),
         None,
     )
     if not test:
-        raise ReportNotFound("That test was not found on this report.")
+        raise OrayanError("That test was not found on this report.")
 
-    cached = db.get_explanation(report_id, test["name"], language)
-    if cached:
-        return cached
+    cache_key = _key(
+        "explain", language, test_name.lower(), summary_text, json.dumps(test, sort_keys=True, default=str)
+    )
+    hit = _cached(cache_key)
+    if hit:
+        return hit
 
     text = _generate(
         ORAYAN_PERSONALITY,
-        build_explain_prompt(test, db.get_summary_text(report_id, language)),
+        build_explain_prompt(test, summary_text),
         language,
     )
-    db.set_explanation(report_id, test["name"], language, text)
-    return text
+    return _remember(cache_key, text)
 
 
 def explain_term(term: str, language: str) -> str:
-    cached = db.get_term_explanation(term, language)
-    if cached:
-        return cached
+    # Definitions are the same for everybody, so this one is shared.
+    cache_key = _key("term", language, term.lower())
+    hit = _cached(cache_key)
+    if hit:
+        return hit
 
-    text = _generate(ORAYAN_PERSONALITY, build_glossary_prompt(term), language)
-    db.set_term_explanation(term, language, text)
-    return text
+    return _remember(cache_key, _generate(ORAYAN_PERSONALITY, build_glossary_prompt(term), language))
 
 
 def ask_about_report(
-    report_id: str, question: str, language: str, user_id: str | None = None
+    filename: str,
+    tests: list[dict],
+    counts: dict,
+    question: str,
+    summary_text: str,
+    language: str,
 ) -> str:
-    record = get_report(report_id, user_id=user_id)
     context = "\n".join(
         [
-            f"Report file: {record['filename']}",
-            f"Tests read: {record['summary'].get('total', 0)}",
-            f"Outside the reference range on the report: {record['summary'].get('flagged_total', 0)}",
+            f"Report file: {filename or 'lab report'}",
+            f"Tests read: {counts.get('total', len(tests))}",
+            f"Outside the reference range on the report: {counts.get('flagged_total', 0)}",
             "",
             "Tests:",
-            _tests_block(record["tests"]),
+            _tests_block(tests),
             "",
             "Summary already given to the user:",
-            db.get_summary_text(report_id, language) or "(not generated yet)",
+            summary_text or "(not generated yet)",
         ]
     )
 
