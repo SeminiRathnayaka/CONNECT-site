@@ -14,6 +14,7 @@ import { Avatar } from '../../components/ui/Avatar';
 import { Badge } from '../../components/ui/Badge';
 import { GlassCard } from '../../components/ui/GlassCard';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { LoadingState } from '../../components/ui/LoadingState';
 import { buttonClass } from '../../components/ui/Button';
 import { formatDate, relativeDay } from '../../utils/dates';
 
@@ -21,16 +22,25 @@ export default function FamilyMemberPage() {
   const { memberId } = useParams();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [family, setFamily] = useFamily();
+  const { family, removeFamily, loading } = useFamily();
   const member = family.find((m) => m.id === memberId);
 
-  const removeProfile = () => {
+  const removeProfile = async () => {
     if (!member) return;
     if (!window.confirm(`Remove the profile for ${member.name}?`)) return;
-    setFamily(family.filter((m) => m.id !== member.id));
+    const removed = await removeFamily(member.id);
+    if (!removed) return;
     toast('Family profile removed.');
     navigate('/family');
   };
+
+  if (loading) {
+    return (
+      <div className="page-container py-10">
+        <LoadingState label="Loading profile…" />
+      </div>
+    );
+  }
 
   if (!member) {
     return (
@@ -87,7 +97,7 @@ export default function FamilyMemberPage() {
             <Pill className="h-4 w-4" aria-hidden />
             Medications
           </Link>
-          <button type="button" className={buttonClass('danger', 'sm')} onClick={removeProfile}>
+          <button type="button" className={buttonClass('danger', 'sm')} onClick={() => void removeProfile()}>
             <Trash2 className="h-4 w-4" aria-hidden />
             Remove profile
           </button>

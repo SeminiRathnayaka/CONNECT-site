@@ -1,4 +1,4 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import {
   AlertTriangle,
   HeartPulse,
@@ -11,13 +11,16 @@ import {
   Trash2,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import type { EmergencyContact } from '../../types';
-import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { useEmergencyContacts } from '../../hooks/useHealthFeatures';
+import { useProfile } from '../../hooks/useProfile';
+import type { EmergencyContact as EmergencyContactRow } from '../../lib/database.types';
+import type { EmergencyContact } from '../../hooks/useHealthFeatures';
 import { useToast } from '../../hooks/useToast';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { GlassCard } from '../../components/ui/GlassCard';
 import { Badge } from '../../components/ui/Badge';
 import { Modal } from '../../components/ui/Modal';
+import { LoadingState } from '../../components/ui/LoadingState';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { Button, buttonClass } from '../../components/ui/Button';
 import { Input, Textarea } from '../../components/ui/FormControls';
@@ -45,25 +48,27 @@ const splitLines = (value: string) =>
     .filter(Boolean);
 
 export default function Emergency() {
-  const [contacts, setContacts] = useLocalStorage<EmergencyContact[]>(
-    'connect_emergency_contacts',
-    [],
-  );
-  const [info, setInfo] = useLocalStorage('connect_emergency_info', {
-    bloodType: '',
-    allergies: [] as string[],
-    conditions: [] as string[],
-    medications: [] as string[],
-    notes: [] as string[],
-  });
+  const { items: contacts, create, remove, loading, error } = useEmergencyContacts();
+  const { profile, saveProfile } = useProfile();
   const { toast } = useToast();
+
+  // The Emergency screen reads the person's own summary off their profile.
+  const info = {
+    bloodType: profile.bloodType,
+    allergies: profile.allergies,
+    conditions: profile.conditions,
+    medications: profile.medications,
+    notes: profile.emergencyNotes,
+  };
 
   const [contactOpen, setContactOpen] = useState(false);
   const [contactForm, setContactForm] = useState(emptyContactForm);
   const [toRemove, setToRemove] = useState<EmergencyContact | null>(null);
+  const [savingContact, setSavingContact] = useState(false);
 
   const [infoOpen, setInfoOpen] = useState(false);
   const [infoForm, setInfoForm] = useState(emptyInfoForm);
+  const [savingInfo, setSavingInfo] = useState(false);
 
   const canSaveContact =
     contactForm.name.trim() !== '' &&
@@ -75,23 +80,27 @@ export default function Emergency() {
     setContactOpen(true);
   };
 
-  const saveContact = () => {
+  const saveContact = async () => {
     if (!canSaveContact) return;
-    const payload: EmergencyContact = {
-      id: `ec-${Date.now()}`,
+
+    setSavingContact(true);
+    const created = await create({
       name: contactForm.name.trim(),
       relation: contactForm.relation.trim(),
       phone: contactForm.phone.trim(),
-    };
-    setContacts((prev) => [payload, ...prev]);
+    } as Partial<EmergencyContactRow>);
+    setSavingContact(false);
+    if (!created) return;
+
     setContactOpen(false);
     setContactForm(emptyContactForm);
     toast('Contact added.');
   };
 
-  const confirmRemove = () => {
+  const confirmRemove = async () => {
     if (!toRemove) return;
-    setContacts((prev) => prev.filter((c) => c.id !== toRemove.id));
+    const removed = await remove(toRemove.id);
+    if (!removed) return;
     setToRemove(null);
     toast('Contact removed.', 'info');
   };
@@ -107,14 +116,18 @@ export default function Emergency() {
     setInfoOpen(true);
   };
 
-  const saveInfo = () => {
-    setInfo({
+  const saveInfo = async () => {
+    setSavingInfo(true);
+    const ok = await saveProfile({
       bloodType: infoForm.bloodType.trim(),
       allergies: splitLines(infoForm.allergies),
       conditions: splitLines(infoForm.conditions),
       medications: splitLines(infoForm.medications),
-      notes: splitLines(infoForm.notes),
+      emergencyNotes: splitLines(infoForm.notes),
     });
+    setSavingInfo(false);
+    if (!ok) return;
+
     setInfoOpen(false);
     toast('Medical information updated.');
   };
@@ -198,7 +211,15 @@ export default function Emergency() {
               {addContactButton}
             </div>
 
-            {contacts.length === 0 ? (
+            {error ? (
+        <p role="alert" className="rounded-2xl border border-red-400/40 bg-red-500/10 px-4 py-3 text-sm text-red-700">
+          {error}
+        </p>
+      ) : null}
+
+      {loading ? (
+        <LoadingState label="Loading emergency details..." />
+      ) : contacts.length === 0 ? (
               <EmptyState
                 title="No emergency contacts yet"
                 description="Add the people you would want called first in an urgent situation."
@@ -300,8 +321,13 @@ export default function Emergency() {
             >
               Cancel
             </button>
-            <Button variant="primary" size="sm" onClick={saveContact} disabled={!canSaveContact}>
-              Add contact
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => void saveContact()}
+              disabled={!canSaveContact || savingContact}
+            >
+              {savingContact ? 'Saving…' : 'Add contact'}
             </Button>
           </>
         }
@@ -374,8 +400,13 @@ export default function Emergency() {
             >
               Cancel
             </button>
-            <Button variant="primary" size="sm" onClick={saveInfo}>
-              Save changes
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => void saveInfo()}
+              disabled={savingInfo}
+            >
+              {savingInfo ? 'Saving…' : 'Save information'}
             </Button>
           </>
         }

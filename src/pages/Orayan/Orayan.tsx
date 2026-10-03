@@ -89,7 +89,7 @@ export default function Orayan() {
   const [analysisText, setAnalysisText] = useState<string | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [summaryBusy, setSummaryBusy] = useState(false);
-  const [, setReports] = useReports();
+  const { saveReport, saveReportTests } = useReports();
   const { toast } = useToast();
   const { push } = useNotifications();
   const { user } = useAuth();
@@ -120,7 +120,13 @@ export default function Orayan() {
         setReport(created);
         setAnalysisText(response.summary_text || null);
         setStage('done');
-        setReports((prev) => [created, ...prev.filter((r) => r.id !== created.id)]);
+
+        // Persist to Supabase: the whole report in summary_json so history
+        // loads in one query, plus the normalised test rows.
+        await saveReport(created);
+        await saveReportTests(created.id, created).catch(() => {
+          toast('Report saved, but its test values could not be stored.', 'warning');
+        });
 
         if (response.summary_error) {
           toast('Report read successfully, but the AI summary is unavailable.', 'warning');
@@ -142,7 +148,7 @@ export default function Orayan() {
         probe();
       }
     },
-    [push, setReports, toast, user, probe],
+    [push, saveReport, saveReportTests, toast, user, probe],
   );
 
   const startAnalysis = (picked: PickedFile) => {

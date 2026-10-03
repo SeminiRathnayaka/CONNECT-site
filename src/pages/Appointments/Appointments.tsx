@@ -11,13 +11,15 @@ import {
   XCircle,
 } from 'lucide-react';
 import type { Appointment } from '../../types';
-import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { useAppointments } from '../../hooks/useHealthFeatures';
+import type { Appointment as AppointmentRow } from '../../lib/database.types';
 import { useToast } from '../../hooks/useToast';
 import { useNotifications } from '../../hooks/useNotifications';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Badge } from '../../components/ui/Badge';
 import { Modal } from '../../components/ui/Modal';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { LoadingState } from '../../components/ui/LoadingState';
 import { Button, buttonClass } from '../../components/ui/Button';
 import { Input, Select, Textarea } from '../../components/ui/FormControls';
 import { formatDate, relativeDay } from '../../utils/dates';
@@ -36,7 +38,7 @@ const emptyForm = {
 };
 
 export default function Appointments() {
-  const [items, setItems] = useLocalStorage<Appointment[]>('connect_appointments', []);
+  const { items, create, update, loading, error } = useAppointments();
   const { toast } = useToast();
   const { push } = useNotifications();
 
@@ -44,6 +46,7 @@ export default function Appointments() {
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
+  const [saving, setSaving] = useState(false);
   const [viewing, setViewing] = useState<Appointment | null>(null);
   const [toCancel, setToCancel] = useState<Appointment | null>(null);
 
@@ -77,49 +80,45 @@ export default function Appointments() {
     setFormOpen(true);
   };
 
-  const save = () => {
+  const save = async () => {
     if (!form.doctor.trim() || !form.date) {
       toast('Doctor and date are required.', 'warning');
       return;
     }
-    const payload: Appointment = {
-      id: editingId ?? `a-${Date.now()}`,
+    setSaving(true);
+
+    const row: Partial<AppointmentRow> = {
       doctor: form.doctor.trim(),
       specialty: form.specialty.trim() || 'General Practice',
-      date: form.date,
-      time: form.time,
+      appointment_date: form.date,
+      appointment_time: form.time,
       location: form.location.trim() || 'To be confirmed',
-      mode: form.mode as Appointment['mode'],
+      mode: form.mode,
       reason: form.reason.trim() || 'Consultation',
-      status: editingId ? (items.find((a) => a.id === editingId)?.status ?? 'upcoming') : 'upcoming',
+      status: editingId
+        ? (items.find((a) => a.id === editingId)?.status ?? 'upcoming')
+        : 'upcoming',
     };
-    setItems((prev) =>
-      editingId ? prev.map((a) => (a.id === editingId ? payload : a)) : [payload, ...prev],
-    );
+
+    const saved = editingId ? await update(editingId, row) : await create(row);
+    setSaving(false);
+    if (!saved) return;
+
     setFormOpen(false);
+    const label = `${saved.doctor} · ${relativeDay(saved.date)} at ${saved.time}.`;
     toast(editingId ? 'Appointment rescheduled.' : 'Appointment added to your calendar.');
-    if (editingId) {
-      push({
-        title: 'Appointment rescheduled',
-        body: `${payload.doctor} · ${relativeDay(payload.date)} at ${payload.time}.`,
-        type: 'appointment',
-        link: '/appointments',
-      });
-    } else {
-      push({
-        title: 'Appointment confirmed',
-        body: `${payload.doctor} · ${payload.specialty} · ${relativeDay(payload.date)} at ${payload.time}.`,
-        type: 'appointment',
-        link: '/appointments',
-      });
-    }
+    push({
+      title: editingId ? 'Appointment rescheduled' : 'Appointment confirmed',
+      body: editingId ? label : `${saved.doctor} · ${saved.specialty} · ${label}`,
+      type: 'appointment',
+      link: '/appointments',
+    });
   };
 
-  const confirmCancel = () => {
+  const confirmCancel = async () => {
     if (!toCancel) return;
-    setItems((prev) =>
-      prev.map((a) => (a.id === toCancel.id ? { ...a, status: 'cancelled' as const } : a)),
-    );
+    const done = await update(toCancel.id, { status: 'cancelled' });
+    if (!done) return;
     toast('Appointment cancelled.', 'info');
     setToCancel(null);
     setViewing(null);
@@ -171,7 +170,15 @@ export default function Appointments() {
         ))}
       </div>
 
-      {visible.length === 0 ? (
+      {error ? (
+        <p role="alert" className="rounded-2xl border border-red-400/40 bg-red-500/10 px-4 py-3 text-sm text-red-700">
+          {error}
+        </p>
+      ) : null}
+
+      {loading ? (
+        <LoadingState label="Loading appointments…" />
+      ) : visible.length === 0 ? (
         <EmptyState
           title={tab === 'upcoming' ? 'No upcoming appointments' : 'No past appointments'}
           description={
@@ -299,8 +306,8 @@ export default function Appointments() {
             <button type="button" className={buttonClass('ghost', 'sm')} onClick={() => setFormOpen(false)}>
               Cancel
             </button>
-            <Button variant="primary" size="sm" onClick={save}>
-              {editingId ? 'Save new time' : 'Add appointment'}
+            <Button variant="primary" size="sm" onClick={() => void save()} disabled={saving}>
+              {saving ? 'Saving…' : editingId ? 'Save changes' : 'Add appointment'}
             </Button>
           </>
         }
@@ -404,7 +411,7 @@ export default function Appointments() {
             <button type="button" className={buttonClass('ghost', 'sm')} onClick={() => setToCancel(null)}>
               Keep appointment
             </button>
-            <button type="button" className={buttonClass('danger', 'sm')} onClick={confirmCancel}>
+            <button type="button" className={buttonClass('danger', 'sm')} onClick={() => void confirmCancel()}>
               Cancel appointment
             </button>
           </>

@@ -144,6 +144,8 @@ export type AppointmentStatus = 'upcoming' | 'completed' | 'cancelled';
 
 export interface Appointment {
   id: string;
+  /** Which family member this visit is for. Undefined means the signed-in person. */
+  memberId?: string;
   doctor: string;
   specialty: string;
   date: string;

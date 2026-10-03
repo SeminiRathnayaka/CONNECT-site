@@ -1,13 +1,15 @@
-﻿import { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { FileSearch, FolderOpen, Plus, Search, SlidersHorizontal } from 'lucide-react';
 import type { HealthRecord, RecordCategory } from '../../types';
-import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { useHealthRecords } from '../../hooks/useHealthFeatures';
+import type { HealthRecord as HealthRecordRow } from '../../lib/database.types';
 import { useToast } from '../../hooks/useToast';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { GlassCard } from '../../components/ui/GlassCard';
 import { Badge } from '../../components/ui/Badge';
 import { Modal } from '../../components/ui/Modal';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { LoadingState } from '../../components/ui/LoadingState';
 import { Button, buttonClass } from '../../components/ui/Button';
 import { Input, Select, Textarea } from '../../components/ui/FormControls';
 import { formatDate, todayISO } from '../../utils/dates';
@@ -54,12 +56,13 @@ const emptyForm = {
 };
 
 export default function HealthRecords() {
-  const [records, setRecords] = useLocalStorage<HealthRecord[]>('connect_records', []);
+  const { items: records, create, loading, error } = useHealthRecords();
   const { toast } = useToast();
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<(typeof categories)[number]>('All');
   const [open, setOpen] = useState<HealthRecord | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(emptyForm);
 
   const filtered = useMemo(() => {
@@ -92,13 +95,13 @@ export default function HealthRecords() {
     form.provider.trim() !== '' &&
     form.summary.trim() !== '';
 
-  const save = () => {
+  const save = async () => {
     if (!canSave) return;
-    const payload: HealthRecord = {
-      id: `hr-${Date.now()}`,
+
+    const row: Partial<HealthRecordRow> = {
       title: form.title.trim(),
       category: form.category,
-      date: form.date,
+      record_date: form.date,
       provider: form.provider.trim(),
       status: form.status,
       summary: form.summary.trim(),
@@ -106,9 +109,14 @@ export default function HealthRecords() {
         .split('\n')
         .map((d) => d.trim())
         .filter(Boolean),
-      file: form.file.trim() || undefined,
+      file_path: form.file.trim() || null,
     };
-    setRecords((prev) => [payload, ...prev]);
+
+    setSaving(true);
+    const created = await create(row);
+    setSaving(false);
+    if (!created) return;
+
     setFormOpen(false);
     setForm(emptyForm);
     toast('Record added.');
@@ -131,7 +139,15 @@ export default function HealthRecords() {
         actions={addButton}
       />
 
-      {records.length === 0 ? (
+      {error ? (
+        <p role="alert" className="rounded-2xl border border-red-400/40 bg-red-500/10 px-4 py-3 text-sm text-red-700">
+          {error}
+        </p>
+      ) : null}
+
+      {loading ? (
+        <LoadingState label="Loading health records…" />
+      ) : records.length === 0 ? (
         <EmptyState
           title="No health records yet"
           description="Reports, lab results, vaccinations and history you add will appear here."
@@ -268,7 +284,7 @@ export default function HealthRecords() {
             >
               Cancel
             </button>
-            <Button variant="primary" size="sm" onClick={save} disabled={!canSave}>
+            <Button variant="primary" size="sm" onClick={() => void save()} disabled={!canSave || saving}>
               Add record
             </Button>
           </>

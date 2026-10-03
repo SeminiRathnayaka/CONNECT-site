@@ -10,13 +10,15 @@ import {
   User,
 } from 'lucide-react';
 import type { Medication } from '../../types';
-import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { useMarkMedicationTaken, useMedications } from '../../hooks/useHealthFeatures';
+import type { Medication as MedicationRow } from '../../lib/database.types';
 import { useToast } from '../../hooks/useToast';
 import { useNotifications } from '../../hooks/useNotifications';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Badge } from '../../components/ui/Badge';
 import { Modal } from '../../components/ui/Modal';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { LoadingState } from '../../components/ui/LoadingState';
 import { Button, buttonClass } from '../../components/ui/Button';
 import { Input, Select, Textarea } from '../../components/ui/FormControls';
 import { relativeDay } from '../../utils/dates';
@@ -37,13 +39,15 @@ const emptyForm = {
 type FormState = typeof emptyForm;
 
 export default function Medications() {
-  const [meds, setMeds] = useLocalStorage<Medication[]>('connect_medications', []);
+  const { items: meds, create, update, remove, loading, error } = useMedications();
+  const markTaken = useMarkMedicationTaken();
   const { toast } = useToast();
   const { push } = useNotifications();
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm);
+  const [saving, setSaving] = useState(false);
   const [toDelete, setToDelete] = useState<Medication | null>(null);
 
   const openAdd = () => {
@@ -68,51 +72,58 @@ export default function Medications() {
     setFormOpen(true);
   };
 
-  const save = () => {
+  const save = async () => {
     if (!form.name.trim()) {
       toast('Please enter the medication name.', 'warning');
       return;
     }
-    const payload: Medication = {
-      id: editingId ?? `m-${Date.now()}`,
+    const row: Partial<MedicationRow> = {
       name: form.name.trim(),
       dosage: form.dosage.trim() || 'As prescribed',
       frequency: form.frequency,
-      times: form.times.split(',').map((t) => t.trim()).filter(Boolean),
-      nextDose: form.nextDose || (form.times.split(',')[0] ?? '—'),
+      times: form.times
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean),
+      next_dose: form.nextDose || (form.times.split(',')[0] ?? '—'),
       prescriber: form.prescriber.trim() || 'Not specified',
       purpose: form.purpose.trim() || 'General wellbeing',
-      refillDate: form.refillDate,
-      food: form.food as Medication['food'],
-      takenToday: editingId ? (meds.find((m) => m.id === editingId)?.takenToday ?? false) : false,
+      refill_date: form.refillDate || null,
+      food: form.food,
+      // Editing never clears a dose that was already ticked today.
+      taken_today: editingId ? (meds.find((m) => m.id === editingId)?.takenToday ?? false) : false,
     };
 
-    setMeds((prev) =>
-      editingId ? prev.map((m) => (m.id === editingId ? payload : m)) : [payload, ...prev],
-    );
+    setSaving(true);
+    const saved = editingId ? await update(editingId, row) : await create(row);
+    setSaving(false);
+    if (!saved) return;
+
     setFormOpen(false);
     toast(editingId ? 'Medication updated.' : 'Medication added.');
     if (!editingId) {
       push({
         title: 'Medication added',
-        body: `${payload.name} ${payload.dosage} · ${payload.frequency}.`,
+        body: `${saved.name} ${saved.dosage} · ${saved.frequency}.`,
         type: 'medication',
         link: '/medications',
       });
     }
   };
 
-  const toggleTaken = (m: Medication) => {
-    setMeds((prev) => prev.map((x) => (x.id === m.id ? { ...x, takenToday: !x.takenToday } : x)));
+  const toggleTaken = async (m: Medication) => {
+    const next = !m.takenToday;
+    await markTaken(m.id, next);
     toast(
-      m.takenToday ? `${m.name} marked as not taken.` : `${m.name} marked as taken. Well done!`,
-      m.takenToday ? 'info' : 'success',
+      next ? `${m.name} marked as taken. Well done!` : `${m.name} marked as not taken.`,
+      next ? 'success' : 'info',
     );
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (!toDelete) return;
-    setMeds((prev) => prev.filter((x) => x.id !== toDelete.id));
+    const removed = await remove(toDelete.id);
+    if (!removed) return;
     toast(`${toDelete.name} removed from your list.`, 'info');
     setToDelete(null);
   };
@@ -152,7 +163,15 @@ export default function Medications() {
         />
       </div>
 
-      {meds.length === 0 ? (
+      {error ? (
+        <p role="alert" className="rounded-2xl border border-red-400/40 bg-red-500/10 px-4 py-3 text-sm text-red-700">
+          {error}
+        </p>
+      ) : null}
+
+      {loading ? (
+        <LoadingState label="Loading medications…" />
+      ) : meds.length === 0 ? (
         <EmptyState
           title="No medications yet"
           description="Add your first medication to start tracking doses and refills."
@@ -207,7 +226,7 @@ export default function Medications() {
               <div className="mt-auto flex flex-wrap gap-2 border-t border-ink-100 pt-3">
                 <button
                   type="button"
-                  onClick={() => toggleTaken(m)}
+                  onClick={() => void toggleTaken(m)}
                   className={cn(buttonClass('soft', 'sm'), !m.takenToday && 'flex-1')}
                 >
                   <Check className="h-4 w-4" aria-hidden />
@@ -240,15 +259,15 @@ export default function Medications() {
         open={formOpen}
         onClose={() => setFormOpen(false)}
         title={editingId ? 'Edit medication' : 'Add medication'}
-        description="Saved locally on this device."
+        description="Saved to your account and available on any device."
         size="lg"
         footer={
           <>
             <button type="button" className={buttonClass('ghost', 'sm')} onClick={() => setFormOpen(false)}>
               Cancel
             </button>
-            <Button variant="primary" size="sm" onClick={save}>
-              {editingId ? 'Save changes' : 'Add medication'}
+            <Button variant="primary" size="sm" onClick={() => void save()} disabled={saving}>
+              {saving ? 'Saving…' : editingId ? 'Save changes' : 'Add medication'}
             </Button>
           </>
         }
@@ -331,7 +350,7 @@ export default function Medications() {
             <button type="button" className={buttonClass('ghost', 'sm')} onClick={() => setToDelete(null)}>
               Keep it
             </button>
-            <button type="button" className={buttonClass('danger', 'sm')} onClick={confirmDelete}>
+            <button type="button" className={buttonClass('danger', 'sm')} onClick={() => void confirmDelete()}>
               <Trash2 className="h-4 w-4" aria-hidden />
               Remove
             </button>

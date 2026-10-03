@@ -1,13 +1,14 @@
 ﻿import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, CalendarClock, HeartPulse, Plus, Users } from 'lucide-react';
-import type { FamilyMember, Relationship } from '../../types';
+import type { Relationship } from '../../types';
 import { useFamily } from '../../hooks/useFamily';
 import { useToast } from '../../hooks/useToast';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Avatar } from '../../components/ui/Avatar';
 import { Badge } from '../../components/ui/Badge';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { LoadingState } from '../../components/ui/LoadingState';
 import { Modal } from '../../components/ui/Modal';
 import { Button, buttonClass } from '../../components/ui/Button';
 import { Input, Select, Textarea } from '../../components/ui/FormControls';
@@ -28,8 +29,6 @@ const genderOptions = [
   { value: 'Male', label: 'Male' },
   { value: 'Other', label: 'Other' },
 ];
-
-const accents = ['blue', 'teal', 'violet', 'amber', 'rose'] as const;
 
 interface MemberForm {
   name: string;
@@ -62,11 +61,12 @@ const toList = (value: string) =>
     .filter(Boolean);
 
 export default function Family() {
-  const [family, setFamily] = useFamily();
+  const { family, addFamily, loading, error } = useFamily();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<MemberForm>(emptyForm);
   const [submitted, setSubmitted] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const upcomingCount = family.filter((m) => m.upcomingAppointment).length;
   const ageValue = Number(form.age);
@@ -79,35 +79,26 @@ export default function Family() {
     setOpen(true);
   };
 
-  const save = () => {
+  const save = async () => {
     setSubmitted(true);
     if (nameInvalid || ageInvalid) return;
 
-    const name = form.name.trim();
-    const initials = name
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((part) => part[0]?.toUpperCase() ?? '')
-      .join('');
-    const notes = form.notes.trim();
-
-    const member: FamilyMember = {
-      id: `f-${Date.now()}`,
-      name,
-      relationship: form.relationship,
+    setSaving(true);
+    const created = await addFamily({
+      name: form.name,
       age: ageValue,
+      relationship: form.relationship,
       gender: form.gender,
       bloodType: form.bloodType.trim(),
-      initials,
-      accent: accents[family.length % accents.length],
       conditions: toList(form.conditions),
       allergies: toList(form.allergies),
       medications: toList(form.medications),
-    };
-    if (notes) member.notes = notes;
+      notes: form.notes.trim(),
+    });
+    setSaving(false);
 
-    setFamily([...family, member]);
+    if (!created) return;
+
     setForm(emptyForm);
     setSubmitted(false);
     setOpen(false);
@@ -135,7 +126,15 @@ export default function Family() {
         }
       />
 
-      {family.length === 0 ? (
+      {error ? (
+        <p role="alert" className="rounded-2xl border border-red-400/40 bg-red-500/10 px-4 py-3 text-sm text-red-700">
+          {error}
+        </p>
+      ) : null}
+
+      {loading ? (
+        <LoadingState label="Loading family profiles…" />
+      ) : family.length === 0 ? (
         <EmptyState
           title="No family profiles yet"
           description="Add the people you care for to keep their vitals, medications and visits in one place."
@@ -218,7 +217,7 @@ export default function Family() {
         open={open}
         onClose={() => setOpen(false)}
         title="Add family member"
-        description="Profiles are stored on this device."
+        description="Saved to your account and visible on any device you sign in on."
         size="lg"
         footer={
           <>
@@ -229,8 +228,8 @@ export default function Family() {
             >
               Cancel
             </button>
-            <Button variant="primary" size="sm" onClick={save}>
-              Add member
+            <Button variant="primary" size="sm" onClick={() => void save()} disabled={saving}>
+              {saving ? 'Saving…' : 'Add member'}
             </Button>
           </>
         }

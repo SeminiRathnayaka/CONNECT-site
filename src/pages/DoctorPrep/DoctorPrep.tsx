@@ -1,4 +1,4 @@
-import { useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   CalendarClock,
@@ -9,12 +9,13 @@ import {
   Printer,
   Trash2,
 } from 'lucide-react';
-import type { Appointment, DoctorQuestion } from '../../types';
-import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { useAppointments, useDoctorPrepNote, useDoctorQuestions } from '../../hooks/useHealthFeatures';
+import type { DoctorPrepNote as DoctorPrepNoteRow, DoctorQuestion as DoctorQuestionRow } from '../../lib/database.types';
 import { useToast } from '../../hooks/useToast';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { GlassCard } from '../../components/ui/GlassCard';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { LoadingState } from '../../components/ui/LoadingState';
 import { Button, buttonClass } from '../../components/ui/Button';
 import { Input, Textarea } from '../../components/ui/FormControls';
 import { formatDate, relativeDay } from '../../utils/dates';
@@ -32,39 +33,57 @@ const suggestions = [
 ];
 
 export default function DoctorPrep() {
-  const [questions, setQuestions] = useLocalStorage<DoctorQuestion[]>(
-    'connect_doctor_questions',
-    [],
-  );
-  const [notes, setNotes] = useLocalStorage<string>('connect_doctor_notes', '');
-  const [appointments] = useLocalStorage<Appointment[]>('connect_appointments', []);
+  const { items: questions, create, update, remove, loading, error } = useDoctorQuestions();
+  const { note, loading: notesLoading, saveNote } = useDoctorPrepNote();
+  const { items: appointments } = useAppointments();
+  const [notes, setNotes] = useState(note);
+  const [savingNote, setSavingNote] = useState(false);
   const [draft, setDraft] = useState('');
   const { toast } = useToast();
+
+  // Load the stored note once it arrives.
+  useEffect(() => {
+    if (!notesLoading) setNotes(note);
+  }, [note, notesLoading]);
 
   const nextVisit = appointments
     .filter((a) => a.status === 'upcoming')
     .sort((a, b) => a.date.localeCompare(b.date))[0];
 
-  const addQuestion = (text: string) => {
+  const addQuestion = async (text: string) => {
     const clean = text.trim();
     if (!clean) return;
     if (questions.some((q) => q.text.toLowerCase() === clean.toLowerCase())) {
       toast('That question is already on your list.', 'info');
       return;
     }
-    setQuestions((prev) => [
-      ...prev,
-      { id: `q-${Date.now()}`, text: clean, category: 'My question', done: false },
-    ]);
+    const added = await create({
+      text: clean,
+      category: 'My question',
+      done: false,
+    } as Partial<DoctorQuestionRow>);
+    if (!added) return;
     setDraft('');
     toast('Question added to your checklist.');
   };
 
-  const toggle = (id: string) =>
-    setQuestions((prev) => prev.map((q) => (q.id === id ? { ...q, done: !q.done } : q)));
+  const toggle = (id: string) => {
+    const question = questions.find((q) => q.id === id);
+    if (!question) return;
+    void update(id, { done: !question.done } as Partial<DoctorQuestionRow>);
+  };
 
-  const remove = (id: string) =>
-    setQuestions((prev) => prev.filter((q) => q.id !== id));
+  const removeQuestion = (id: string) => {
+    void remove(id);
+  };
+
+  /** Notes save on blur so the page does not write on every keystroke. */
+  const persistNotes = async () => {
+    if (notes === note) return;
+    setSavingNote(true);
+    await saveNote({ content: notes } as Partial<DoctorPrepNoteRow>);
+    setSavingNote(false);
+  };
 
   const availableSuggestions = suggestions.filter(
     (s) => !questions.some((q) => q.text.toLowerCase() === s.toLowerCase()),
@@ -138,7 +157,15 @@ export default function DoctorPrep() {
               </Button>
             </form>
 
-            {questions.length === 0 ? (
+            {error ? (
+        <p role="alert" className="rounded-2xl border border-red-400/40 bg-red-500/10 px-4 py-3 text-sm text-red-700">
+          {error}
+        </p>
+      ) : null}
+
+      {loading ? (
+        <LoadingState label="Loading your checklist..." />
+      ) : questions.length === 0 ? (
               <EmptyState
                 title="No questions yet"
                 description="Add your own, or pick from the suggestions on the right."
@@ -179,7 +206,7 @@ export default function DoctorPrep() {
                     </span>
                     <button
                       type="button"
-                      onClick={() => remove(q.id)}
+                      onClick={() => removeQuestion(q.id)}
                       className="rounded-lg p-1 text-ink-400 transition hover:bg-alert-50 hover:text-alert-600"
                       aria-label={`Remove question: ${q.text}`}
                     >
@@ -192,15 +219,18 @@ export default function DoctorPrep() {
           </GlassCard>
 
           <GlassCard>
-            <h2 className="mb-3 text-base font-bold text-ink-900">Notes for the visit</h2>
+<h2 className="mb-3 text-base font-bold text-ink-900">Notes for the visit</h2>
             <Textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="Symptom timeline, medicines you brought, questions from family…"
+              onBlur={() => void persistNotes()}
+              placeholder="Symptom timeline, medicines you brought, questions from family."
               className="min-h-36"
               aria-label="Notes for the visit"
             />
-            <p className="mt-2 text-xs text-ink-400">Saved automatically on this device.</p>
+            <p className="mt-2 text-xs text-ink-400" aria-live="polite">
+              {savingNote ? 'Saving…' : 'Saved to your account automatically.'}
+            </p>
           </GlassCard>
         </section>
 

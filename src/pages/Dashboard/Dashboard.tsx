@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CalendarPlus, HeartPulse, NotebookPen, Siren, Sparkles } from 'lucide-react';
-import type { Appointment, HealthMetric, Medication } from '../../types';
+import type { HealthMetric } from '../../types';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { GlassCard } from '../../components/ui/GlassCard';
 import { HealthMetricCard } from '../../components/health/HealthMetricCard';
@@ -12,7 +12,7 @@ import { buttonClass } from '../../components/ui/Button';
 import { SectionHeader } from '../../components/ui/SectionHeader';
 import { useReports } from '../../hooks/useReports';
 import { useFamily } from '../../hooks/useFamily';
-import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { useAppointments, useHealthMetrics, useMedications } from '../../hooks/useHealthFeatures';
 import { useAuth } from '../../hooks/useAuth';
 import { iconFor } from '../../utils/icons';
 import { formatDate } from '../../utils/dates';
@@ -27,11 +27,11 @@ import {
 
 export default function Dashboard() {
   const { user } = useAuth();
-  const [reports] = useReports();
-  const [family] = useFamily();
-  const [appointments] = useLocalStorage<Appointment[]>('connect_appointments', []);
-  const [medications] = useLocalStorage<Medication[]>('connect_medications', []);
-  const [metrics] = useLocalStorage<HealthMetric[]>('connect_metrics', []);
+  const { reports } = useReports();
+  const { family } = useFamily();
+  const { items: appointments } = useAppointments();
+  const { items: medications } = useMedications();
+  const { items: metrics } = useHealthMetrics();
   const [selected, setSelected] = useState<HealthMetric | null>(null);
 
   const firstName = user?.name.split(' ')[0] ?? 'there';

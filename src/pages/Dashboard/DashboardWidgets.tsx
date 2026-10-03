@@ -175,7 +175,7 @@ export function AiInsights() {
 /* Family overview                                                     */
 /* ------------------------------------------------------------------ */
 export function FamilyOverview() {
-  const [family] = useFamily();
+  const { family } = useFamily();
   const members = family.slice(0, 4);
 
   return (
