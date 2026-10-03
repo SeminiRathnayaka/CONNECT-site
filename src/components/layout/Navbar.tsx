@@ -7,6 +7,7 @@ import {
   Menu,
   Siren,
   User,
+  UserCog,
   X,
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
@@ -168,6 +169,9 @@ export function Navbar() {
                   </div>
                   <MenuLink to="/dashboard" icon={<LayoutDashboard className="h-4 w-4" />}>
                     Dashboard
+                  </MenuLink>
+                  <MenuLink to="/profile" icon={<UserCog className="h-4 w-4" />}>
+                    Profile &amp; emergency info
                   </MenuLink>
                   <MenuLink to="/family" icon={<User className="h-4 w-4" />}>
                     Family profiles

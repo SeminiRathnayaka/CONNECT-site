@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Loaded before app imports, because services read environment variables such as
-# DATABASE_URL and GEMINI_API_KEY at import time.
+# SUPABASE_URL and GEMINI_API_KEY at import time.
 load_dotenv(
     os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -15,7 +15,6 @@ load_dotenv(
     )
 )
 
-from app.routes.auth import router as auth_router  # noqa: E402
 from app.routes.chat import router as chat_router  # noqa: E402
 from app.routes.orayan import router as orayan_router  # noqa: E402
 from app.services import db  # noqa: E402
@@ -23,42 +22,50 @@ from app.services import db  # noqa: E402
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    # Connect to Postgres and clear anything expired while the server was down.
     db.init_db()
-    expired = db.purge_expired_sessions()
-    if expired:
-        print(f"Removed {expired} expired session(s).")
     yield
 
 
-app = FastAPI(title="CONNECT AI", version="2.1.0", lifespan=lifespan)
+app = FastAPI(title="CONNECT AI", version="3.0.0", lifespan=lifespan)
 
-# Sign-in uses an HttpOnly session cookie, so credentials must be allowed and
-# origins must be listed explicitly: browsers reject "*" together with cookies.
-# In development Vite proxies /api to this server, which keeps requests
-# same-origin, but these origins cover running the two separately.
+# Sign-in is handled by Supabase, and the browser sends a bearer token rather
+# than a cookie, so requests no longer need credentials. The origins are still
+# listed explicitly because browsers do not allow "*" with an Authorization
+# header on cross-origin requests.
+_allowed_origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
+]
+
+# Extra origins can be added for a deployed site, comma separated.
+_extra = os.getenv("AI_ALLOWED_ORIGINS", "").strip()
+if _extra:
+    _allowed_origins.extend(origin.strip() for origin in _extra.split(",") if origin.strip())
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:4173",
-        "http://127.0.0.1:4173",
-    ],
-    allow_credentials=True,
+    allow_origins=_allowed_origins,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.include_router(auth_router)
+# The local username/password auth routes are gone: Supabase owns accounts now,
+# and keeping a second sign-in path would mean two sources of truth.
 app.include_router(chat_router)
 app.include_router(orayan_router)
 
 
 @app.get("/health", tags=["meta"])
 def health():
+    supabase_url = (os.getenv("SUPABASE_URL") or "").strip()
     return {
         "status": "ok",
         "model_configured": bool(os.getenv("GEMINI_API_KEY")),
+        "supabase_configured": bool(supabase_url),
         "database": "postgresql",
     }
 

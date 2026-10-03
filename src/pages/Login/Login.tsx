@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   ArrowRight,
   Eye,
@@ -21,18 +21,24 @@ type Mode = 'signin' | 'signup';
 
 const MIN_PASSWORD = 8;
 
-export default function Login() {
-  const { user, loading, signIn, signUp, signOut } = useAuth();
+export default function Login({ initialMode = 'signin' }: { initialMode?: Mode }) {
+  const { user, loading, signIn, signUp, signOut, sendPasswordReset } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
+  const location = useLocation();
 
-  const [mode, setMode] = useState<Mode>('signin');
+  // RequireAuth remembers the page they were trying to reach.
+  const from =
+    (location.state as { from?: string } | null)?.from ?? undefined;
+
+  const [mode, setMode] = useState<Mode>(initialMode);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
 
   const validate = () => {
     const next: Record<string, string> = {};
@@ -64,11 +70,33 @@ export default function Login() {
       // Never keep the password in component state after a successful sign-in.
       setPassword('');
       toast(mode === 'signup' ? 'Welcome to CONNECT!' : 'Welcome back!');
-      navigate('/dashboard');
+      // Send them back to whatever page asked them to sign in.
+      navigate(from ?? '/dashboard', { replace: true });
     } catch (error) {
       const message = errorMessage(error, 'Could not sign you in. Please try again.');
       setErrors({ password: message });
       toast(message, 'warning');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * Sends a reset link. The same confirmation is shown whether or not the
+   * address has an account, so this cannot be used to discover who is signed up.
+   */
+  const resetPassword = async () => {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setErrors({ email: 'Enter your email address first.' });
+      return;
+    }
+    setBusy(true);
+    try {
+      await sendPasswordReset(email.trim());
+      setResetSent(true);
+      toast('Password reset link sent. Check your inbox.');
+    } catch (error) {
+      toast(errorMessage(error, 'Could not send the reset link.'), 'warning');
     } finally {
       setBusy(false);
     }
@@ -253,6 +281,29 @@ export default function Login() {
               </div>
               {errors.password ? <FieldError message={errors.password} /> : null}
             </div>
+
+            {mode === 'signin' ? (
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => void resetPassword()}
+                  disabled={busy}
+                  className="text-xs font-semibold text-primary-600 hover:underline disabled:opacity-50"
+                >
+                  {resetSent ? 'Resend reset link' : 'Forgot password?'}
+                </button>
+              </div>
+            ) : null}
+
+            {resetSent ? (
+              <p
+                role="status"
+                className="rounded-2xl border border-ok-100 bg-ok-50 px-4 py-3 text-xs text-ok-700"
+              >
+                If an account exists for {email.trim()}, a reset link is on its way. The link brings
+                you back here to choose a new password.
+              </p>
+            ) : null}
 
             <Button type="submit" variant="primary" size="lg" loading={busy} className="w-full">
               {mode === 'signin' ? 'Sign in' : 'Create account'}

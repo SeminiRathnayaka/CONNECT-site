@@ -97,7 +97,6 @@ export interface ReportSummaryResponse {
 
 export interface ChatResponse {
   reply: string
-  session_id: string
   language: Language
 }
 
@@ -148,6 +147,8 @@ export class ApiError extends Error {
 /** Turns any thrown value into a message that is safe to show a person. */
 export function errorMessage(error: unknown, fallback = 'Something went wrong. Please try again.'): string {
   if (error instanceof ApiError) return error.message;
+  // AuthError from useAuth, and anything else that carries a readable message.
+  if (error instanceof Error && error.message) return error.message;
   return fallback;
 }
 
@@ -162,14 +163,34 @@ export function setUnauthorizedHandler(handler: (() => void) | null): void {
   onUnauthorized = handler
 }
 
+/**
+ * Reads the current Supabase access token.
+ *
+ * The AI service checks this on every call so only signed-in people can spend
+ * the Gemini quota, and so it knows whose report is being worked on.
+ */
+async function accessToken(): Promise<string | null> {
+  if (!isSupabaseConfigured) return null;
+  try {
+    const { data } = await supabase.auth.getSession();
+    return data.session?.access_token ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  let response: Response
+  let response: Response;
+
+  const token = await accessToken();
+  const headers = new Headers(init?.headers);
+  if (token) headers.set('Authorization', `Bearer ${token}`);
 
   try {
     response = await fetch(`${BASE}${path}`, {
-      credentials: 'include',
       ...init,
-    })
+      headers,
+    });
   } catch {
     throw new ApiError(
       'Could not reach the AI server. Make sure it is running with "npm run dev".',
@@ -250,18 +271,14 @@ export function listConversations(): Promise<{
 
 export function sendChat(
   message: string,
-  sessionId: string | undefined,
+  history: Array<{ role: 'user' | 'model'; content: string }>,
   language: Language,
 ): Promise<ChatResponse> {
   return postJson<ChatResponse>('/api/chat', {
     message,
-    session_id: sessionId,
+    history,
     language,
   })
-}
-
-export function resetChat(sessionId: string): Promise<{ ok: boolean }> {
-  return postJson<{ ok: boolean }>('/api/reset', { session_id: sessionId })
 }
 
 /* ------------------------------------------------------------------ */
@@ -282,41 +299,44 @@ export function uploadReport(
   return new Promise<UploadResponse>((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     xhr.open('POST', `${BASE}/api/orayan/upload`)
-    // Required so the session cookie travels with the upload.
-    xhr.withCredentials = true
 
-    xhr.upload.addEventListener('progress', (event) => {
-      if (event.lengthComputable && onProgress) {
-        onProgress(Math.round((event.loaded / event.total) * 100))
-      }
-    })
+    // The bearer token identifies the account, so it must be set before sending.
+    void accessToken().then((token) => {
+      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
 
-    xhr.addEventListener('load', () => {
-      let body: unknown
-      try {
-        body = JSON.parse(xhr.responseText)
-      } catch {
-        return reject(new ApiError('The server sent an unreadable response.', xhr.status))
-      }
-      if (xhr.status >= 200 && xhr.status < 300) {
-        resolve(body as UploadResponse)
-      } else {
-        const detail = (body as { detail?: string })?.detail
-        if (xhr.status === 401) onUnauthorized?.()
-        reject(new ApiError(detail ?? `Upload failed (${xhr.status})`, xhr.status))
-      }
-    })
+      xhr.upload.addEventListener('progress', (event) => {
+        if (event.lengthComputable && onProgress) {
+          onProgress(Math.round((event.loaded / event.total) * 100))
+        }
+      })
 
-    xhr.addEventListener('error', () =>
-      reject(
-        new ApiError(
-          'Could not reach the AI server. Make sure it is running with "npm run dev".',
-          0,
+      xhr.addEventListener('load', () => {
+        let body: unknown
+        try {
+          body = JSON.parse(xhr.responseText)
+        } catch {
+          return reject(new ApiError('The server sent an unreadable response.', xhr.status))
+        }
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(body as UploadResponse)
+        } else {
+          const detail = (body as { detail?: string })?.detail
+          if (xhr.status === 401) onUnauthorized?.()
+          reject(new ApiError(detail ?? `Upload failed (${xhr.status})`, xhr.status))
+        }
+      })
+
+      xhr.addEventListener('error', () =>
+        reject(
+          new ApiError(
+            'Could not reach the AI server. Make sure it is running with "npm run dev".',
+            0,
+          ),
         ),
-      ),
-    )
+      )
 
-    xhr.send(form)
+      xhr.send(form)
+    })
   })
 }
 
@@ -382,6 +402,7 @@ export function deleteReport(reportId: string): Promise<{ ok: boolean }> {
 /* ------------------------------------------------------------------ */
 
 import type { LabResult, ValueStatus } from '../types'
+import { isSupabaseConfigured, supabase } from './supabase'
 
 /**
  * The UI uses a 3-state status (normal / attention / outside) while the

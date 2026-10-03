@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.prompts.baymax import BAYMAX_PERSONALITY
-from app.services import auth, db
+from app.services import supabase_auth
 
 load_dotenv()
 
@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["chat"])
 
 MODEL_NAME = "gemini-2.5-flash"
+
+# How many earlier turns to replay. Enough for a coherent reply without sending
+# a whole conversation on every message.
+MAX_HISTORY_TURNS = 20
 
 LANGUAGE_RULES = {
     "en": (
@@ -38,39 +42,44 @@ def _normalise_language(language: str | None) -> str:
     return value[:2] if value[:2] in ("en", "si") else "en"
 
 
+class ChatMessage(BaseModel):
+    role: str = Field(pattern="^(user|model)$")
+    content: str = Field(min_length=1, max_length=8000)
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
-    session_id: str | None = None
     language: str = "en"
-
-
-class ResetRequest(BaseModel):
-    session_id: str
+    # The conversation lives in the browser's Supabase tables, protected by Row
+    # Level Security, so the last turns are sent along and this service stays
+    # stateless. That keeps a second copy of somebody's health conversation out
+    # of a second database.
+    history: list[ChatMessage] = Field(default_factory=list)
 
 
 @router.post("/chat")
-def chat(payload: ChatRequest, user: dict = Depends(auth.require_user)):
-    user_id = user["id"]
+def chat(payload: ChatRequest, user: dict = Depends(supabase_auth.current_user)):
     api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        return {
-            "reply": "My connection is not set up yet.",
-            "session_id": payload.session_id or "",
-            "language": _normalise_language(payload.language),
-        }
-
-    # A conversation id from another account is ignored and replaced, so nobody
-    # can join someone else's history by guessing an id.
-    session_id = db.get_or_create_conversation(user_id, payload.session_id)
     language = _normalise_language(payload.language)
-    user_message = payload.message.strip()
+
+    if not api_key:
+        return {"reply": "My connection is not set up yet.", "language": language}
+
+    # Only the most recent turns are needed for context, and the cap keeps a
+    # long conversation from growing past the model's context window.
+    history = [
+        {"role": turn.role, "parts": [turn.content]}
+        for turn in payload.history[-MAX_HISTORY_TURNS:]
+    ]
 
     instruction = f"{BAYMAX_PERSONALITY}\n\n{LANGUAGE_RULES[language]}"
     model = genai.GenerativeModel(
         model_name=MODEL_NAME,
         system_instruction=instruction,
     )
-    chat_session = model.start_chat(history=db.get_chat_history(session_id))
+    chat_session = model.start_chat(history=history)
+
+    user_message = payload.message.strip()
 
     try:
         response = chat_session.send_message(user_message)
@@ -84,24 +93,4 @@ def chat(payload: ChatRequest, user: dict = Depends(auth.require_user)):
     if not reply:
         raise HTTPException(status_code=502, detail="Baymax returned an empty reply. Please try again.")
 
-    db.append_chat(session_id, user_message, reply)
-    db.touch_conversation(session_id, user_message)
-    return {"reply": reply, "session_id": session_id, "language": language}
-
-
-@router.post("/reset")
-def reset(payload: ResetRequest, user: dict = Depends(auth.require_user)):
-    # Deletes the whole conversation rather than only its messages, so the id
-    # cannot be reused afterwards.
-    if not db.delete_conversation(user["id"], payload.session_id):
-        raise HTTPException(status_code=404, detail="That conversation was not found.")
-    return {"ok": True}
-
-
-@router.get("/conversations")
-def conversations(user: dict = Depends(auth.require_user)):
-    """Lists this account's retained conversations, newest first."""
-    return {
-        "conversations": db.list_conversations(user["id"]),
-        "max_conversations": db.MAX_CONVERSATIONS,
-    }
+    return {"reply": reply, "language": language}

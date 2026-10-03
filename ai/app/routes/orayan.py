@@ -1,9 +1,9 @@
-import logging
+﻿import logging
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
-from app.services import auth, db, orayan as orayan_service
+from app.services import db, orayan as orayan_service, supabase_auth
 from app.services.extract import ExtractionError, extract_text
 from app.services.parser import parse_report, summarise
 
@@ -56,7 +56,7 @@ def _reraise(error, status: int = 502) -> None:
 async def upload(
     file: UploadFile = File(...),
     language: str = Form("en"),
-    user: dict = Depends(auth.require_user),
+    user: dict = Depends(supabase_auth.current_user),
 ):
     user_id = user["id"]
     language = _normalise_language(language)
@@ -106,7 +106,7 @@ async def upload(
 
 
 @router.post("/summary")
-def summary(payload: SummaryRequest, user: dict = Depends(auth.require_user)):
+def summary(payload: SummaryRequest, user: dict = Depends(supabase_auth.current_user)):
     user_id = user["id"]
     language = _normalise_language(payload.language)
     try:
@@ -132,7 +132,7 @@ def summary(payload: SummaryRequest, user: dict = Depends(auth.require_user)):
 
 
 @router.post("/explain")
-def explain(payload: ExplainRequest, user: dict = Depends(auth.require_user)):
+def explain(payload: ExplainRequest, user: dict = Depends(supabase_auth.current_user)):
     language = _normalise_language(payload.language)
     try:
         text = orayan_service.explain_test(
@@ -145,8 +145,14 @@ def explain(payload: ExplainRequest, user: dict = Depends(auth.require_user)):
 
 
 @router.post("/term")
-def term(payload: TermRequest, language: str = "en"):
-    # Term definitions are shared reference text, so this one needs no account.
+def term(
+    payload: TermRequest,
+    language: str = "en",
+    user: dict = Depends(supabase_auth.current_user),
+):
+    # Definitions are shared reference text so no report is involved, but the
+    # endpoint still needs an account: otherwise anyone who finds the address
+    # could spend the Gemini quota.
     language = _normalise_language(language)
     try:
         text = orayan_service.explain_term(payload.term, language)
@@ -157,7 +163,7 @@ def term(payload: TermRequest, language: str = "en"):
 
 
 @router.post("/ask")
-def ask(payload: AskRequest, language: str = "en", user: dict = Depends(auth.require_user)):
+def ask(payload: AskRequest, language: str = "en", user: dict = Depends(supabase_auth.current_user)):
     language = _normalise_language(language)
     try:
         text = orayan_service.ask_about_report(
@@ -172,7 +178,7 @@ def ask(payload: AskRequest, language: str = "en", user: dict = Depends(auth.req
 @router.get("/reports")
 def list_reports(
     limit: int = Query(50, ge=1, le=200),
-    user: dict = Depends(auth.require_user),
+    user: dict = Depends(supabase_auth.current_user),
 ):
     return {"reports": orayan_service.list_reports(limit, user_id=user["id"])}
 
@@ -181,7 +187,7 @@ def list_reports(
 def get_report(
     report_id: str,
     language: str = "en",
-    user: dict = Depends(auth.require_user),
+    user: dict = Depends(supabase_auth.current_user),
 ):
     user_id = user["id"]
     language = _normalise_language(language)
@@ -203,7 +209,7 @@ def get_report(
 
 
 @router.delete("/reports/{report_id}")
-def delete_report(report_id: str, user: dict = Depends(auth.require_user)):
+def delete_report(report_id: str, user: dict = Depends(supabase_auth.current_user)):
     if not orayan_service.delete_report(report_id, user_id=user["id"]):
         raise HTTPException(status_code=404, detail="That report could not be found.")
     return {"ok": True}

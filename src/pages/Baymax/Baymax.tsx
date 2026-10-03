@@ -12,10 +12,12 @@ import {
   Unplug,
 } from 'lucide-react';
 import type { ChatConversation, ChatMessage } from '../../types';
-import { ApiError, resetChat, sendChat } from '../../lib/api';
+import { ApiError, sendChat } from '../../lib/api';
+import { MAX_HISTORY } from '../../hooks/useBaymaxConversations';
 import type { Language } from '../../lib/api';
 import { useDictation, useSpeech } from '../../lib/speech';
 import { useAiStatus } from '../../hooks/useAiStatus';
+import { useBaymaxConversations } from '../../hooks/useBaymaxConversations';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { useAuth } from '../../hooks/useAuth';
 import { timeNow } from '../../utils/dates';
@@ -113,16 +115,12 @@ function newId(prefix: 'u' | 'a') {
 
 export default function Baymax() {
   const { user } = useAuth();
-  // Keyed per account: these transcripts are private health conversations, so a
-  // shared key would show the previous person's history to the next person who
-  // signs in on this browser.
-  const storeKey = user ? `connect_baymax_conversations_${user.id}` : 'connect_baymax_conversations_signed_out';
+  // The transcripts live in Supabase now, so they follow the person between
+  // devices and Row Level Security keeps other people out.
+  const [conversations, setConversations, , removeConversation] = useBaymaxConversations();
+  // Only the open thread is remembered per browser; the list itself is shared
+  // across devices, so this just restores the last one that was being read.
   const activeKey = user ? `connect_baymax_active_${user.id}` : 'connect_baymax_active_signed_out';
-
-  const [conversations, setConversations] = useLocalStorage<ChatConversation[]>(
-    storeKey,
-    [],
-  );
   const [activeId, setActiveId] = useLocalStorage<string>(activeKey, '');
   const [input, setInput] = useState('');
   const [typing, setTyping] = useState(false);
@@ -211,14 +209,19 @@ export default function Baymax() {
 
     setTyping(true);
     try {
-      const result = await sendChat(text, active.sessionId, language);
-      if (result.session_id !== active.sessionId) {
-        setConversations((prev) =>
-          prev.map((c) =>
-            c.id === active.id ? { ...c, sessionId: result.session_id } : c,
-          ),
-        );
-      }
+      // The AI service is stateless, so the thread is rebuilt from what is
+      // stored. The welcome note is skipped because it is not part of the
+      // medical conversation.
+      const history = active.messages
+        .filter((message) => message.role === 'user' || message.role === 'assistant')
+        .filter((message) => message.id !== WELCOME.id)
+        .slice(-MAX_HISTORY)
+        .map((message) => ({
+          role: message.role === 'assistant' ? ('model' as const) : ('user' as const),
+          content: message.content,
+        }));
+
+      const result = await sendChat(text, history, language);
       appendAssistant(active.id, result.reply);
       speech.speak(result.reply);
       probe();
@@ -241,10 +244,9 @@ export default function Baymax() {
   };
 
   const handleDelete = (id: string) => {
-    const target = conversations.find((c) => c.id === id);
-    if (target?.sessionId) {
-      resetChat(target.sessionId).catch(() => undefined);
-    }
+    // Removing a transcript has to leave the database too, otherwise it would
+    // come back on the next device.
+    void removeConversation(id);
     const next = conversations.filter((c) => c.id !== id);
     if (next.length === 0) {
       const fresh = createConversation(0);
