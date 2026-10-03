@@ -1,4 +1,4 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   ArrowRight,
@@ -22,7 +22,16 @@ type Mode = 'signin' | 'signup';
 const MIN_PASSWORD = 8;
 
 export default function Login({ initialMode = 'signin' }: { initialMode?: Mode }) {
-  const { user, loading, signIn, signUp, signOut, sendPasswordReset } = useAuth();
+  const {
+    user,
+    loading,
+    signIn,
+    signUp,
+    signOut,
+    sendPasswordReset,
+    updatePassword,
+    recoveringPassword,
+  } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
@@ -35,13 +44,31 @@ export default function Login({ initialMode = 'signin' }: { initialMode?: Mode }
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [resetSent, setResetSent] = useState(false);
 
+  // Following the emailed reset link signs the person in for long enough to
+  // set a new password, so the form changes over to asking for one.
+  const choosingPassword = recoveringPassword;
+  const isResetMode = choosingPassword;
+
   const validate = () => {
     const next: Record<string, string> = {};
+
+    if (isResetMode) {
+      if (password.length < MIN_PASSWORD) {
+        next.password = `Please use a password of at least ${MIN_PASSWORD} characters.`;
+      }
+      if (password !== confirmPassword) {
+        next.confirmPassword = 'The two passwords do not match.';
+      }
+      setErrors(next);
+      return Object.keys(next).length === 0;
+    }
+
     if (mode === 'signup' && name.trim().length < 2) {
       next.name = 'Please enter your full name.';
     }
@@ -64,6 +91,15 @@ export default function Login({ initialMode = 'signin' }: { initialMode?: Mode }
 
     setBusy(true);
     try {
+      if (isResetMode) {
+        await updatePassword(password);
+        setPassword('');
+        setConfirmPassword('');
+        toast('Your password has been changed. You can use it from now on.');
+        navigate(from ?? '/dashboard', { replace: true });
+        return;
+      }
+
       if (mode === 'signup') await signUp(name.trim(), email.trim(), password);
       else await signIn(email.trim(), password);
 
@@ -195,6 +231,7 @@ export default function Login({ initialMode = 'signin' }: { initialMode?: Mode }
 
         {/* Form panel */}
         <div className="glass-strong p-7 sm:p-9">
+          {!isResetMode ? (
           <div className="mb-6 inline-flex rounded-full border border-ink-200 bg-white/70 p-1">
             {(
               [
@@ -220,18 +257,66 @@ export default function Login({ initialMode = 'signin' }: { initialMode?: Mode }
               </button>
             ))}
           </div>
+        ) : null}
 
           <h1 className="text-xl font-bold text-ink-900">
-            {mode === 'signin' ? 'Welcome back' : 'Create your CONNECT account'}
+            {isResetMode
+              ? 'Choose a new password'
+              : mode === 'signin'
+                ? 'Welcome back'
+                : 'Create your CONNECT account'}
           </h1>
           <p className="mt-1 text-sm text-ink-600">
-            {mode === 'signin'
-              ? 'Sign in to continue to your health companion.'
-              : 'Set up your personal health space in seconds.'}
+            {isResetMode
+              ? 'Pick a new password to finish securing your account.'
+              : mode === 'signin'
+                ? 'Sign in to continue to your health companion.'
+                : 'Set up your personal health space in seconds.'}
           </p>
 
           <form className="mt-6 space-y-4" onSubmit={submit} noValidate>
-            {mode === 'signup' ? (
+            {isResetMode ? (
+              <>
+                <div>
+                  <div className="relative">
+                    <Input
+                      label="New password"
+                      type={showPassword ? 'text' : 'password'}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder={`At least ${MIN_PASSWORD} characters`}
+                      autoComplete="new-password"
+                      icon={<LockKeyhole className="h-4 w-4" />}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((s) => !s)}
+                      className="absolute right-3 top-8 text-xs font-bold text-primary-600"
+                    >
+                      {showPassword ? 'Hide' : 'Show'}
+                    </button>
+                  </div>
+                  {errors.password ? <FieldError message={errors.password} /> : null}
+                </div>
+
+                <div>
+                  <Input
+                    label="Confirm new password"
+                    type={showPassword ? 'text' : 'password'}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Type it again"
+                    autoComplete="new-password"
+                    icon={<LockKeyhole className="h-4 w-4" />}
+                  />
+                  {errors.confirmPassword ? (
+                    <FieldError message={errors.confirmPassword} />
+                  ) : null}
+                </div>
+              </>
+            ) : null}
+
+            {!isResetMode && mode === 'signup' ? (
               <div>
                 <Input
                   label="Full name"
@@ -245,19 +330,22 @@ export default function Login({ initialMode = 'signin' }: { initialMode?: Mode }
               </div>
             ) : null}
 
-            <div>
-              <Input
-                label="Email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                autoComplete="email"
-                icon={<Mail className="h-4 w-4" />}
-              />
-              {errors.email ? <FieldError message={errors.email} /> : null}
-            </div>
+            {!isResetMode ? (
+              <div>
+                <Input
+                  label="Email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  autoComplete="email"
+                  icon={<Mail className="h-4 w-4" />}
+                />
+                {errors.email ? <FieldError message={errors.email} /> : null}
+              </div>
+            ) : null}
 
+            {!isResetMode ? (
             <div>
               <div className="relative">
                 <Input
@@ -281,8 +369,9 @@ export default function Login({ initialMode = 'signin' }: { initialMode?: Mode }
               </div>
               {errors.password ? <FieldError message={errors.password} /> : null}
             </div>
+            ) : null}
 
-            {mode === 'signin' ? (
+            {!isResetMode && mode === 'signin' ? (
               <div className="flex justify-end">
                 <button
                   type="button"
@@ -295,7 +384,7 @@ export default function Login({ initialMode = 'signin' }: { initialMode?: Mode }
               </div>
             ) : null}
 
-            {resetSent ? (
+            {!isResetMode && resetSent ? (
               <p
                 role="status"
                 className="rounded-2xl border border-ok-100 bg-ok-50 px-4 py-3 text-xs text-ok-700"
@@ -306,7 +395,11 @@ export default function Login({ initialMode = 'signin' }: { initialMode?: Mode }
             ) : null}
 
             <Button type="submit" variant="primary" size="lg" loading={busy} className="w-full">
-              {mode === 'signin' ? 'Sign in' : 'Create account'}
+              {isResetMode
+                ? 'Save new password'
+                : mode === 'signin'
+                  ? 'Sign in'
+                  : 'Create account'}
               {!busy ? <ArrowRight className="h-4 w-4" aria-hidden /> : null}
             </Button>
           </form>

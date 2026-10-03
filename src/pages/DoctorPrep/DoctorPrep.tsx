@@ -10,7 +10,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useAppointments, useDoctorPrepNote, useDoctorQuestions } from '../../hooks/useHealthFeatures';
-import type { DoctorPrepNote as DoctorPrepNoteRow, DoctorQuestion as DoctorQuestionRow } from '../../lib/database.types';
+import type { DoctorQuestion as DoctorQuestionRow } from '../../lib/database.types';
 import { useToast } from '../../hooks/useToast';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { GlassCard } from '../../components/ui/GlassCard';
@@ -81,7 +81,7 @@ export default function DoctorPrep() {
   const persistNotes = async () => {
     if (notes === note) return;
     setSavingNote(true);
-    await saveNote({ content: notes } as Partial<DoctorPrepNoteRow>);
+    await saveNote(notes);
     setSavingNote(false);
   };
 

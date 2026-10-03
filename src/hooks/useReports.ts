@@ -9,13 +9,22 @@ export interface UseReportsResult {
   reports: MedicalReport[];
   loading: boolean;
   error: string | null;
-  /** Stores a finished report, then refreshes so it appears in the list. */
-  saveReport: (report: MedicalReport) => Promise<boolean>;
+  /**
+   * Stores a finished report and uploads the original file to private Storage.
+   *
+   * The file itself is kept, not just the parsed numbers, so somebody can
+   * reopen the original document later. It goes in under the account's own
+   * folder, and the bucket is private, so only that person can fetch it.
+   */
+  saveReport: (report: MedicalReport, file?: File) => Promise<boolean>;
   /** Replaces the test rows that belong to a report. */
   saveReportTests: (reportId: string, report: MedicalReport) => Promise<void>;
   removeReport: (id: string) => Promise<boolean>;
   refresh: () => Promise<void>;
 }
+
+/** Private bucket that only the owner can read. */
+const BUCKET = 'reports';
 
 /** Rebuilds the UI shape from a stored row. */
 function reportFromRow(row: ReportRow): MedicalReport {
@@ -57,11 +66,24 @@ export function useReports(): UseReportsResult {
   });
 
   const saveReport = useCallback(
-    async (report: MedicalReport) => {
+    async (report: MedicalReport, file?: File) => {
+      if (!user) return false;
+
+      const path = `${user.id}/${report.id}/${report.fileName}`;
+
+      // The upload happens before the row is written, so a failure here leaves
+      // no history entry pointing at a file that was never stored.
+      if (file) {
+        const { error } = await supabase.storage
+          .from(BUCKET)
+          .upload(path, file, { contentType: file.type || 'application/octet-stream', upsert: true });
+        if (error) throw new Error(describeError(error));
+      }
+
       const stored = await collection.create({
         id: report.id,
         filename: report.fileName,
-        file_path: `${user?.id ?? 'me'}/${report.id}/${report.fileName}`,
+        file_path: file ? path : '',
         source: report.type === 'Scanned Report' ? 'image' : 'upload',
         raw_text: '',
         summary_json: report as unknown as Record<string, unknown>,
@@ -100,18 +122,24 @@ export function useReports(): UseReportsResult {
 
   const removeReport = useCallback(
     async (id: string) => {
-      const report = collection.items.find((item) => item.id === id);
+      // Read the stored path instead of rebuilding it, so a report saved before
+      // uploads existed, or one whose file is missing, still deletes cleanly.
+      const { data } = await supabase
+        .from('reports')
+        .select('file_path')
+        .eq('id', id)
+        .maybeSingle();
 
-      // The uploaded file is private, so clear it as well as the row.
-      if (report && user) {
-        const path = `${user.id}/${report.id}/${report.fileName}`;
-        const { error } = await supabase.storage.from('reports').remove([path]);
-        if (error) throw new Error(describeError(error));
+      const path = (data as { file_path?: string } | null)?.file_path;
+      if (path) {
+        const { error } = await supabase.storage.from(BUCKET).remove([path]);
+        // A file that is already gone is not a reason to keep the history entry.
+        if (error) console.warn('Could not remove the stored file:', describeError(error));
       }
 
       return collection.remove(id);
     },
-    [collection, user],
+    [collection],
   );
 
   return {

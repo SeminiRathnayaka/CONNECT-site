@@ -170,7 +170,16 @@ export function useDoctorPrepNote() {
     (row) => row.content,
     Boolean(user),
   );
-  return { note: value ?? '', loading, error, saveNote: save };
+
+  // This table is keyed by owner_id rather than a separate id column, so the
+  // account has to travel with the save. Without it the database cannot tell
+  // which existing note to replace and the second save would fail.
+  const saveNote = useCallback(
+    (content: string) => save({ content, owner_id: user?.id }),
+    [save, user],
+  );
+
+  return { note: value ?? '', loading, error, saveNote };
 }
 
 /* ------------------------------------------------------------------ */

@@ -12,6 +12,10 @@ interface AuthContextValue {
   signUp: (name: string, email: string, password: string) => Promise<User>;
   signOut: () => Promise<void>;
   sendPasswordReset: (email: string) => Promise<void>;
+  /** Chooses a new password after the emailed reset link was followed. */
+  updatePassword: (newPassword: string) => Promise<void>;
+  /** True while the page should show the new-password screen. */
+  recoveringPassword: boolean;
   /**
    * True when the project requires email confirmation, so a new account is
    * created but cannot sign in until the link in the email is opened.
@@ -169,6 +173,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const resetError = useCallback(() => setAuthError(null), []);
 
+  /**
+   * Sets a new password after somebody followed the emailed reset link.
+   *
+   * Supabase has already signed them in as part of that link, so this only has
+   * to write the new password to the account they were just sent to.
+   */
+  const updatePassword = useCallback(async (newPassword: string) => {
+    if (!isSupabaseConfigured) throw new AuthError(SUPABASE_SETUP_MESSAGE);
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) throw new AuthError(describeError(error));
+  }, []);
+
+  /** Lets the login page show the "choose a new password" screen. */
+  const [recoveringPassword, setRecoveringPassword] = useState(false);
+
+  useEffect(() => {
+    const { data } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') setRecoveringPassword(true);
+    });
+    return () => data.subscription.unsubscribe();
+  }, []);
+
   const value = useMemo(
     () => ({
       user,
@@ -180,6 +206,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       needsEmailConfirmation,
       accessToken: session?.access_token ?? null,
       resetError,
+      updatePassword,
+      recoveringPassword,
     }),
     [
       user,

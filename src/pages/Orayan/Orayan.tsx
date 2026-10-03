@@ -121,9 +121,10 @@ export default function Orayan() {
         setAnalysisText(response.summary_text || null);
         setStage('done');
 
-        // Persist to Supabase: the whole report in summary_json so history
-        // loads in one query, plus the normalised test rows.
-        await saveReport(created);
+        // Persist to Supabase: the original document goes to private Storage,
+        // the whole report in summary_json so history loads in one query, plus
+        // the normalised test rows.
+        await saveReport(created, picked.file);
         await saveReportTests(created.id, created).catch(() => {
           toast('Report saved, but its test values could not be stored.', 'warning');
         });
