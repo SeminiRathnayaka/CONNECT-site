@@ -4,6 +4,7 @@ import { ApiError, askAboutReport } from '../../lib/api';
 import type { Language } from '../../lib/api';
 import { cn } from '../../utils/cn';
 import { LanguageToggle } from '../../components/ui/LanguageToggle';
+import { ReportMarkdown } from '../../components/ui/ReportMarkdown';
 
 const SUGGESTIONS: Record<Language, string[]> = {
   en: [
@@ -115,15 +116,8 @@ export function AskOrayan({
                 <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-gradient-to-br from-aqua-400 to-aqua-600 text-white">
                   <Bot className="h-3.5 w-3.5" aria-hidden />
                 </span>
-                <div className="max-w-[92%] space-y-2 rounded-2xl rounded-tl-sm bg-white/85 px-3.5 py-2.5 ring-1 ring-ink-100">
-                  {turn.answer.split(/\n{2,}/).map((p, i) => (
-                    <p
-                      key={`${i}-${p.slice(0, 20)}`}
-                      className="text-sm leading-relaxed text-ink-700"
-                    >
-                      {p}
-                    </p>
-                  ))}
+                <div className="max-w-[92%] rounded-2xl rounded-tl-sm bg-white/85 px-3.5 py-2.5 ring-1 ring-ink-100">
+                  <ReportMarkdown text={turn.answer} className="space-y-2" />
                 </div>
               </div>
             </div>

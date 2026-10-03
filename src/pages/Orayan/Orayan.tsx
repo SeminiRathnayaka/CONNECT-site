@@ -28,6 +28,7 @@ import { buttonClass } from '../../components/ui/Button';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { LanguageToggle } from '../../components/ui/LanguageToggle';
+import { ReportMarkdown } from '../../components/ui/ReportMarkdown';
 import { AnalysisProgress, DropZone, ResultCard } from './OrayanParts';
 import type { PickedFile } from './OrayanParts';
 import { AskOrayan } from './AskOrayan';
@@ -276,12 +277,6 @@ export default function Orayan() {
 
   const counts = report ? countByStatus(report.results) : null;
   const withinRange = counts ? counts.normal + counts.attention : 0;
-  const paragraphs = analysisText
-    ? analysisText
-        .split(/\n{2,}/)
-        .map((p) => p.trim())
-        .filter(Boolean)
-    : [];
 
   return (
     <div className="page-container py-6 sm:py-8">
@@ -529,16 +524,9 @@ export default function Orayan() {
                 />
               </div>
 
-              <div className="mt-4 space-y-4">
-                {paragraphs.map((p, i) => (
-                  <p
-                    key={`${i}-${p.slice(0, 24)}`}
-                    className="whitespace-pre-line text-sm leading-relaxed text-ink-700"
-                  >
-                    {p}
-                  </p>
-                ))}
-              </div>
+              {analysisText ? (
+                <ReportMarkdown text={analysisText} className="mt-4" />
+              ) : null}
 
               <p className="mt-5 rounded-2xl border border-warn-100 bg-white/70 px-4 py-3 text-xs leading-relaxed text-warn-700">
                 This explanation is provided for understanding your report and is not a medical

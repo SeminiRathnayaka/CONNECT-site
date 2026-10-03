@@ -78,8 +78,9 @@ export function Navbar() {
       ? location.pathname === '/' && location.hash === to.slice(1)
       : location.pathname === to;
 
-  const handleSignOut = () => {
-    signOut();
+  const handleSignOut = async () => {
+    // Clear the server session first, so the cookie cannot be reused.
+    await signOut();
     setProfileOpen(false);
     toast('Signed out successfully.', 'info');
     navigate('/');
@@ -177,7 +178,7 @@ export function Navbar() {
                   <button
                     type="button"
                     role="menuitem"
-                    onClick={handleSignOut}
+                    onClick={() => void handleSignOut()}
                     className="mt-1 flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium text-alert-600 transition hover:bg-alert-50"
                   >
                     <LogOut className="h-4 w-4" />
@@ -240,7 +241,7 @@ export function Navbar() {
           ) : (
             <button
               type="button"
-              onClick={handleSignOut}
+              onClick={() => void handleSignOut()}
               className={buttonClass('secondary', 'md', 'mt-2 w-full')}
             >
               Sign out

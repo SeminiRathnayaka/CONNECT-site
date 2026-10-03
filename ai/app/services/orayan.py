@@ -26,6 +26,16 @@ class OrayanError(Exception):
     pass
 
 
+class ReportNotFound(OrayanError):
+    """The report does not exist, or belongs to another account.
+
+    A separate type so routes can answer 404 without matching on message text,
+    which silently turned into 502 whenever the wording changed. The message
+    stays vague on purpose: saying "not yours" would confirm that somebody
+    else's report id exists.
+    """
+
+
 def _model(system_instruction: str):
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -41,23 +51,29 @@ def _require_api_key() -> None:
         raise OrayanError("GEMINI_API_KEY is not configured on the server.")
 
 
-def save_report(filename: str, text: str, source: str, tests: list[dict]) -> str:
-    return db.save_report(filename, text, source, tests, summarise(tests))
+def save_report(
+    filename: str,
+    text: str,
+    source: str,
+    tests: list[dict],
+    user_id: str | None = None,
+) -> str:
+    return db.save_report(filename, text, source, tests, summarise(tests), user_id=user_id)
 
 
-def get_report(report_id: str) -> dict:
-    record = db.get_report(report_id)
+def get_report(report_id: str, user_id: str | None = None) -> dict:
+    record = db.get_report(report_id, user_id=user_id)
     if not record:
-        raise OrayanError("That report is no longer available. Please upload it again.")
+        raise ReportNotFound("That report is no longer available. Please upload it again.")
     return record
 
 
-def list_reports(limit: int = 50) -> list[dict]:
-    return db.list_reports(limit)
+def list_reports(limit: int = 50, user_id: str | None = None) -> list[dict]:
+    return db.list_reports(limit, user_id=user_id)
 
 
-def delete_report(report_id: str) -> bool:
-    return db.delete_report(report_id)
+def delete_report(report_id: str, user_id: str | None = None) -> bool:
+    return db.delete_report(report_id, user_id=user_id)
 
 
 RATE_LIMIT_HINT = (
@@ -115,8 +131,8 @@ def _tests_block(tests: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def generate_summary(report_id: str, language: str) -> str:
-    record = get_report(report_id)
+def generate_summary(report_id: str, language: str, user_id: str | None = None) -> str:
+    record = get_report(report_id, user_id=user_id)
     tests, summary = record["tests"], record["summary"]
 
     if not tests:
@@ -138,19 +154,21 @@ def generate_summary(report_id: str, language: str) -> str:
     return text
 
 
-def get_summary_text(report_id: str, language: str) -> str:
-    get_report(report_id)
+def get_summary_text(report_id: str, language: str, user_id: str | None = None) -> str:
+    get_report(report_id, user_id=user_id)
     return db.get_summary_text(report_id, language)
 
 
-def explain_test(report_id: str, test_name: str, language: str) -> str:
-    record = get_report(report_id)
+def explain_test(
+    report_id: str, test_name: str, language: str, user_id: str | None = None
+) -> str:
+    record = get_report(report_id, user_id=user_id)
     test = next(
         (item for item in record["tests"] if item["name"].lower() == test_name.lower()),
         None,
     )
     if not test:
-        raise OrayanError("That test was not found on this report.")
+        raise ReportNotFound("That test was not found on this report.")
 
     cached = db.get_explanation(report_id, test["name"], language)
     if cached:
@@ -175,8 +193,10 @@ def explain_term(term: str, language: str) -> str:
     return text
 
 
-def ask_about_report(report_id: str, question: str, language: str) -> str:
-    record = get_report(report_id)
+def ask_about_report(
+    report_id: str, question: str, language: str, user_id: str | None = None
+) -> str:
+    record = get_report(report_id, user_id=user_id)
     context = "\n".join(
         [
             f"Report file: {record['filename']}",

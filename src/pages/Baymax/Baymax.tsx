@@ -17,6 +17,7 @@ import type { Language } from '../../lib/api';
 import { useDictation, useSpeech } from '../../lib/speech';
 import { useAiStatus } from '../../hooks/useAiStatus';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { useAuth } from '../../hooks/useAuth';
 import { timeNow } from '../../utils/dates';
 import { cn } from '../../utils/cn';
 import { buttonClass } from '../../components/ui/Button';
@@ -111,11 +112,18 @@ function newId(prefix: 'u' | 'a') {
 }
 
 export default function Baymax() {
+  const { user } = useAuth();
+  // Keyed per account: these transcripts are private health conversations, so a
+  // shared key would show the previous person's history to the next person who
+  // signs in on this browser.
+  const storeKey = user ? `connect_baymax_conversations_${user.id}` : 'connect_baymax_conversations_signed_out';
+  const activeKey = user ? `connect_baymax_active_${user.id}` : 'connect_baymax_active_signed_out';
+
   const [conversations, setConversations] = useLocalStorage<ChatConversation[]>(
-    'connect_baymax_conversations',
+    storeKey,
     [],
   );
-  const [activeId, setActiveId] = useLocalStorage<string>('connect_baymax_active', '');
+  const [activeId, setActiveId] = useLocalStorage<string>(activeKey, '');
   const [input, setInput] = useState('');
   const [typing, setTyping] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);

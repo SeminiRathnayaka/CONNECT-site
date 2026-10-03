@@ -18,6 +18,7 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { LoadingState } from '../../components/ui/LoadingState';
 import { buttonClass } from '../../components/ui/Button';
 import { LanguageToggle } from '../../components/ui/LanguageToggle';
+import { ReportMarkdown } from '../../components/ui/ReportMarkdown';
 import { ResultCard } from '../Orayan/OrayanParts';
 import { formatDate } from '../../utils/dates';
 import { countByStatus } from '../../utils/health';
@@ -202,20 +203,7 @@ export default function ReportDetail() {
             </div>
 
             {summary ? (
-              <div className="mt-4 space-y-3">
-                {summary
-                  .split(/\n{2,}/)
-                  .map((p) => p.trim())
-                  .filter(Boolean)
-                  .map((p, i) => (
-                    <p
-                      key={`${i}-${p.slice(0, 20)}`}
-                      className="whitespace-pre-line text-sm leading-relaxed text-ink-700"
-                    >
-                      {p}
-                    </p>
-                  ))}
-              </div>
+              <ReportMarkdown text={summary} className="mt-4" />
             ) : (
               <p className="mt-4 rounded-2xl bg-white/70 px-4 py-3 text-xs text-ink-500">
                 No written summary is cached for this language yet.

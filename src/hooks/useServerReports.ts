@@ -31,9 +31,10 @@ function toMedicalReport(item: ReportListItem): MedicalReport {
 }
 
 /**
- * Report history now lives in the AI server's SQLite database, so it survives
- * restarts. The localStorage copy kept by useReports is still mirrored here so
- * the dashboard has something to paint immediately.
+ * Report history lives in the AI server's PostgreSQL database and is scoped to
+ * the signed-in account, so it survives restarts and nobody else can list it.
+ * The localStorage copy is only a mirror, keyed per account, so the dashboard
+ * can paint immediately.
  */
 export function useServerReports() {
   const [reports, setReports] = useState<MedicalReport[]>([]);

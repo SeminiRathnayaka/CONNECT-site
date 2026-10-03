@@ -6,3 +6,4 @@ pypdf==5.1.0
 python-multipart==0.0.20
 fastapi==0.115.6
 uvicorn==0.34.0
+psycopg[binary]==3.3.6

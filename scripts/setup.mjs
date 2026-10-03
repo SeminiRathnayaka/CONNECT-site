@@ -39,6 +39,11 @@ if (!existsSync(python)) {
 run(python, ['-m', 'pip', 'install', '--upgrade', 'pip'])
 run(python, ['-m', 'pip', 'install', '-r', join(root, 'ai', 'requirements.txt')])
 
+// Create the PostgreSQL database and apply the schema. The password is read
+// from ai/.env, so it is never typed on a command line.
+console.log('\n> setting up PostgreSQL')
+run(python, [join(root, 'ai', 'ensure_database.py')], join(root, 'ai'))
+
 if (!existsSync(join(root, 'ai', '.env'))) {
   console.log('\nNote: ai/.env was not found. Copy ai/.env.example to ai/.env and add your GEMINI_API_KEY.')
 }

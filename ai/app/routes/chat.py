@@ -1,14 +1,13 @@
 import logging
 import os
-import uuid
 
 import google.generativeai as genai
 from dotenv import load_dotenv
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.prompts.baymax import BAYMAX_PERSONALITY
-from app.services import db
+from app.services import auth, db
 
 load_dotenv()
 
@@ -50,7 +49,8 @@ class ResetRequest(BaseModel):
 
 
 @router.post("/chat")
-def chat(payload: ChatRequest):
+def chat(payload: ChatRequest, user: dict = Depends(auth.require_user)):
+    user_id = user["id"]
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         return {
@@ -59,7 +59,9 @@ def chat(payload: ChatRequest):
             "language": _normalise_language(payload.language),
         }
 
-    session_id = payload.session_id or str(uuid.uuid4())
+    # A conversation id from another account is ignored and replaced, so nobody
+    # can join someone else's history by guessing an id.
+    session_id = db.get_or_create_conversation(user_id, payload.session_id)
     language = _normalise_language(payload.language)
     user_message = payload.message.strip()
 
@@ -83,10 +85,23 @@ def chat(payload: ChatRequest):
         raise HTTPException(status_code=502, detail="Baymax returned an empty reply. Please try again.")
 
     db.append_chat(session_id, user_message, reply)
+    db.touch_conversation(session_id, user_message)
     return {"reply": reply, "session_id": session_id, "language": language}
 
 
 @router.post("/reset")
-def reset(payload: ResetRequest):
-    db.clear_chat(payload.session_id)
+def reset(payload: ResetRequest, user: dict = Depends(auth.require_user)):
+    # Deletes the whole conversation rather than only its messages, so the id
+    # cannot be reused afterwards.
+    if not db.delete_conversation(user["id"], payload.session_id):
+        raise HTTPException(status_code=404, detail="That conversation was not found.")
     return {"ok": True}
+
+
+@router.get("/conversations")
+def conversations(user: dict = Depends(auth.require_user)):
+    """Lists this account's retained conversations, newest first."""
+    return {
+        "conversations": db.list_conversations(user["id"]),
+        "max_conversations": db.MAX_CONVERSATIONS,
+    }

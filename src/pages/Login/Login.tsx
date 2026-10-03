@@ -12,14 +12,17 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { useToast } from '../../hooks/useToast';
+import { errorMessage } from '../../lib/api';
 import { Avatar } from '../../components/ui/Avatar';
 import { Button, buttonClass } from '../../components/ui/Button';
 import { Input } from '../../components/ui/FormControls';
 
 type Mode = 'signin' | 'signup';
 
+const MIN_PASSWORD = 8;
+
 export default function Login() {
-  const { user, signIn, signUp, signOut } = useAuth();
+  const { user, loading, signIn, signUp, signOut } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -39,25 +42,45 @@ export default function Login() {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
       next.email = 'Enter a valid email address.';
     }
-    if (password.length < 6) {
-      next.password = 'Password must be at least 6 characters.';
+    // Matches the server rule, so the same message is shown in both places.
+    if (mode === 'signup' && password.length < MIN_PASSWORD) {
+      next.password = `Please use a password of at least ${MIN_PASSWORD} characters.`;
+    } else if (mode === 'signin' && password.length < 1) {
+      next.password = 'Please enter your password.';
     }
     setErrors(next);
     return Object.keys(next).length === 0;
   };
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validate()) return;
+
     setBusy(true);
-    window.setTimeout(() => {
-      if (mode === 'signup') signUp(name, email);
-      else signIn(email);
-      setBusy(false);
+    try {
+      if (mode === 'signup') await signUp(name.trim(), email.trim(), password);
+      else await signIn(email.trim(), password);
+
+      // Never keep the password in component state after a successful sign-in.
+      setPassword('');
       toast(mode === 'signup' ? 'Welcome to CONNECT!' : 'Welcome back!');
       navigate('/dashboard');
-    }, 600);
+    } catch (error) {
+      const message = errorMessage(error, 'Could not sign you in. Please try again.');
+      setErrors({ password: message });
+      toast(message, 'warning');
+    } finally {
+      setBusy(false);
+    }
   };
+
+  if (loading) {
+    return (
+      <div className="page-container flex justify-center py-20">
+        <p className="text-sm text-ink-500">Checking your session…</p>
+      </div>
+    );
+  }
 
   /* ----- already signed in ----- */
   if (user) {
@@ -82,7 +105,7 @@ export default function Login() {
               type="button"
               className={buttonClass('ghost', 'md')}
               onClick={() => {
-                signOut();
+                void signOut();
                 toast('Signed out.', 'info');
               }}
             >
@@ -125,7 +148,7 @@ export default function Login() {
               {[
                 { icon: Sparkles, text: 'Baymax AI health conversations' },
                 { icon: ShieldCheck, text: 'Orayan report explanations in English & Sinhala' },
-                { icon: LockKeyhole, text: 'Your data stays on this device' },
+                { icon: LockKeyhole, text: 'Password-protected account, history kept private to you' },
               ].map((b) => (
                 <li key={b.text} className="flex items-center gap-3 text-white/90">
                   <span className="grid h-7 w-7 place-items-center rounded-lg bg-white/20">
@@ -214,7 +237,7 @@ export default function Login() {
                   type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="At least 6 characters"
+                  placeholder={`At least ${MIN_PASSWORD} characters`}
                   autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
                   icon={<LockKeyhole className="h-4 w-4" />}
                   className="pr-11"

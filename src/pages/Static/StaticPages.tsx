@@ -51,25 +51,36 @@ const content: Record<
     eyebrow: 'Legal',
     title: 'Privacy Policy',
     description:
-      'Your data stays on your device. This page explains what CONNECT stores and why.',
+      'This page explains what CONNECT stores, where it is stored, and who can see it.',
     sections: [
       {
-        h: 'What we store',
+        h: 'Your account',
         p: [
-          'Your name, medications, appointments, symptom journal entries, doctor-prep notes and report history are stored in your browser’s localStorage on this device.',
-          'Nothing is sent to a server. Clearing your browser data or using the reset option removes it permanently.',
+          'CONNECT now uses a real account with a password. Your email address and a securely hashed version of your password are stored in our database. We never store your actual password, and it is never saved in your browser.',
+          'Signing in creates a session cookie in your browser. That cookie is what keeps you signed in, and signing out clears it.',
         ],
       },
       {
-        h: 'Uploaded reports',
+        h: 'What we store',
         p: [
-          'Medical reports selected in Orayan are analyzed in the interface on your device. Files are not transmitted anywhere and are discarded when you leave the page.',
+          'The reports you upload to Orayan are sent to our server, stored in a database, and are linked to your account.',
+          'Your Baymax conversations are stored against your account so the assistant can remember context. We keep your 7 most recent conversations, and older ones are deleted automatically.',
+          'Orayan keeps your reports for 3 months. Older reports are deleted automatically.',
+          'Certain local settings still stay in your browser’s localStorage on this device.',
+        ],
+      },
+      {
+        h: 'Who can see your data',
+        p: [
+          'Your reports and conversations are visible only while you are signed in to your own account. One person cannot see another person’s reports or chats, even on the same device.',
+          'Your report text is sent to Google’s Gemini AI to generate the explanations. Please do not use CONNECT for anything you would not share with that service.',
         ],
       },
       {
         h: 'Keeping it private',
         p: [
-          'Because your information never leaves this browser, anyone with access to your device profile may be able to read it. Use a device passcode, and clear your browser data if you share this computer or stop using CONNECT.',
+          'Please sign out on shared computers. Anyone who is signed in to your account can read your report history, so keep your password private.',
+          'Because data now lives on a server, clearing your browser data alone will not remove it. Contact us if you want your history deleted.',
         ],
       },
     ],

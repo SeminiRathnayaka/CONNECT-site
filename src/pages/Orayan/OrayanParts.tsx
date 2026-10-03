@@ -15,6 +15,7 @@ import type { Language } from '../../lib/api';
 import { cn } from '../../utils/cn';
 import { buttonClass } from '../../components/ui/Button';
 import { LanguageToggle } from '../../components/ui/LanguageToggle';
+import { ReportMarkdown } from '../../components/ui/ReportMarkdown';
 
 /* ------------------------------------------------------------------ */
 /* Upload zone                                                         */
@@ -408,17 +409,10 @@ export function ResultCard({
                 {explanationError}
               </p>
             ) : (
-              <div className="space-y-2">
-                {(result.explanation ?? '')
-                  .split(/\n{2,}/)
-                  .map((p) => p.trim())
-                  .filter(Boolean)
-                  .map((p, i) => (
-                    <p key={`${i}-${p.slice(0, 20)}`} className="text-xs leading-relaxed text-ink-700">
-                      {p}
-                    </p>
-                  ))}
-              </div>
+              <ReportMarkdown
+                text={result.explanation ?? ''}
+                className="space-y-2 text-xs [&_p]:text-xs [&_li]:text-xs"
+              />
             )}
 
             <button

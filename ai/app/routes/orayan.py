@@ -1,9 +1,9 @@
 import logging
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
-from app.services import orayan as orayan_service
+from app.services import auth, db, orayan as orayan_service
 from app.services.extract import ExtractionError, extract_text
 from app.services.parser import parse_report, summarise
 
@@ -45,8 +45,20 @@ def _fail(error, status: int = 400) -> HTTPException:
     return HTTPException(status_code=status, detail=message)
 
 
+def _reraise(error, status: int = 502) -> None:
+    """Turns a service error into an HTTP error, 404 when the report is gone."""
+    if isinstance(error, orayan_service.ReportNotFound):
+        raise _fail(error, status=404) from error
+    raise _fail(error, status=status) from error
+
+
 @router.post("/upload")
-async def upload(file: UploadFile = File(...), language: str = Form("en")):
+async def upload(
+    file: UploadFile = File(...),
+    language: str = Form("en"),
+    user: dict = Depends(auth.require_user),
+):
+    user_id = user["id"]
     language = _normalise_language(language)
     filename = (file.filename or "report")[:MAX_FILENAME]
 
@@ -67,12 +79,15 @@ async def upload(file: UploadFile = File(...), language: str = Form("en")):
             "If it is a scan, please try uploading a clear image of the report."
         )
 
-    report_id = orayan_service.save_report(filename, text, source, tests)
+    # Old reports outside the retention window are cleared on upload, so the
+    # 3-month history cannot grow without limit.
+    db.prune_reports(user_id)
+    report_id = orayan_service.save_report(filename, text, source, tests, user_id=user_id)
 
     summary_text = ""
     summary_error = None
     try:
-        summary_text = orayan_service.generate_summary(report_id, language)
+        summary_text = orayan_service.generate_summary(report_id, language, user_id=user_id)
     except orayan_service.OrayanError as error:
         summary_error = str(error)
         logger.warning("Summary unavailable for %s: %s", filename, summary_error)
@@ -91,11 +106,12 @@ async def upload(file: UploadFile = File(...), language: str = Form("en")):
 
 
 @router.post("/summary")
-def summary(payload: SummaryRequest):
+def summary(payload: SummaryRequest, user: dict = Depends(auth.require_user)):
+    user_id = user["id"]
     language = _normalise_language(payload.language)
     try:
-        record = orayan_service.get_report(payload.report_id)
-        cached = orayan_service.get_summary_text(payload.report_id, language)
+        record = orayan_service.get_report(payload.report_id, user_id=user_id)
+        cached = orayan_service.get_summary_text(payload.report_id, language, user_id=user_id)
         if cached:
             return {
                 "report_id": payload.report_id,
@@ -103,9 +119,9 @@ def summary(payload: SummaryRequest):
                 "summary_text": cached,
                 "counts": record["summary"],
             }
-        text = orayan_service.generate_summary(payload.report_id, language)
+        text = orayan_service.generate_summary(payload.report_id, language, user_id=user_id)
     except orayan_service.OrayanError as error:
-        raise _fail(error, status=404 if "no longer available" in str(error) else 502) from error
+        _reraise(error)
 
     return {
         "report_id": payload.report_id,
@@ -116,18 +132,21 @@ def summary(payload: SummaryRequest):
 
 
 @router.post("/explain")
-def explain(payload: ExplainRequest):
+def explain(payload: ExplainRequest, user: dict = Depends(auth.require_user)):
     language = _normalise_language(payload.language)
     try:
-        text = orayan_service.explain_test(payload.report_id, payload.test_name, language)
+        text = orayan_service.explain_test(
+            payload.report_id, payload.test_name, language, user_id=user["id"]
+        )
     except orayan_service.OrayanError as error:
-        raise _fail(error, status=404 if "not found" in str(error) else 502) from error
+        _reraise(error)
 
     return {"test_name": payload.test_name, "language": language, "explanation": text}
 
 
 @router.post("/term")
 def term(payload: TermRequest, language: str = "en"):
+    # Term definitions are shared reference text, so this one needs no account.
     language = _normalise_language(language)
     try:
         text = orayan_service.explain_term(payload.term, language)
@@ -138,28 +157,38 @@ def term(payload: TermRequest, language: str = "en"):
 
 
 @router.post("/ask")
-def ask(payload: AskRequest, language: str = "en"):
+def ask(payload: AskRequest, language: str = "en", user: dict = Depends(auth.require_user)):
     language = _normalise_language(language)
     try:
-        text = orayan_service.ask_about_report(payload.report_id, payload.question, language)
+        text = orayan_service.ask_about_report(
+            payload.report_id, payload.question, language, user_id=user["id"]
+        )
     except orayan_service.OrayanError as error:
-        raise _fail(error, status=404 if "no longer available" in str(error) else 502) from error
+        _reraise(error)
 
     return {"question": payload.question, "language": language, "answer": text}
 
 
 @router.get("/reports")
-def list_reports(limit: int = Query(50, ge=1, le=200)):
-    return {"reports": orayan_service.list_reports(limit)}
+def list_reports(
+    limit: int = Query(50, ge=1, le=200),
+    user: dict = Depends(auth.require_user),
+):
+    return {"reports": orayan_service.list_reports(limit, user_id=user["id"])}
 
 
 @router.get("/reports/{report_id}")
-def get_report(report_id: str, language: str = "en"):
+def get_report(
+    report_id: str,
+    language: str = "en",
+    user: dict = Depends(auth.require_user),
+):
+    user_id = user["id"]
     language = _normalise_language(language)
     try:
-        record = orayan_service.get_report(report_id)
+        record = orayan_service.get_report(report_id, user_id=user_id)
     except orayan_service.OrayanError as error:
-        raise _fail(error, status=404) from error
+        _reraise(error)
 
     return {
         "report_id": record["report_id"],
@@ -169,12 +198,12 @@ def get_report(report_id: str, language: str = "en"):
         "language": language,
         "tests": record["tests"],
         "counts": record["summary"],
-        "summary_text": orayan_service.get_summary_text(report_id, language),
+        "summary_text": orayan_service.get_summary_text(report_id, language, user_id=user_id),
     }
 
 
 @router.delete("/reports/{report_id}")
-def delete_report(report_id: str):
-    if not orayan_service.delete_report(report_id):
+def delete_report(report_id: str, user: dict = Depends(auth.require_user)):
+    if not orayan_service.delete_report(report_id, user_id=user["id"]):
         raise HTTPException(status_code=404, detail="That report could not be found.")
     return {"ok": True}

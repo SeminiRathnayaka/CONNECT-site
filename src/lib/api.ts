@@ -3,11 +3,36 @@
  *
  * In development Vite proxies /api and /health to http://127.0.0.1:8000, so
  * requests are same-origin and no CORS handling is needed here.
+ *
+ * Sign-in is a real server-side account: the server sets an HttpOnly session
+ * cookie, so every request must send cookies with `credentials: 'include'`.
+ * The password is never stored in the browser.
  */
 
 const BASE = ''
 
 export type Language = 'en' | 'si'
+
+/* ------------------------------------------------------------------ */
+/* Account types                                                       */
+/* ------------------------------------------------------------------ */
+
+export interface User {
+  id: string
+  email: string
+  name: string
+  /** Date the account was created, as YYYY-MM-DD. Empty on older responses. */
+  created_at?: string
+}
+
+export interface AuthResponse {
+  user: User
+}
+
+export interface RetentionPolicy {
+  max_conversations: number
+  report_retention_days: number
+}
 
 /* ------------------------------------------------------------------ */
 /* Shared shapes                                                       */
@@ -120,11 +145,31 @@ export class ApiError extends Error {
   }
 }
 
+/** Turns any thrown value into a message that is safe to show a person. */
+export function errorMessage(error: unknown, fallback = 'Something went wrong. Please try again.'): string {
+  if (error instanceof ApiError) return error.message;
+  return fallback;
+}
+
+/**
+ * Called when the backend answers 401, so a session that expired or was
+ * revoked mid-visit sends the person back to the sign-in screen instead of
+ * showing a broken page. useAuth registers this once at start-up.
+ */
+let onUnauthorized: (() => void) | null = null
+
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  onUnauthorized = handler
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response
 
   try {
-    response = await fetch(`${BASE}${path}`, init)
+    response = await fetch(`${BASE}${path}`, {
+      credentials: 'include',
+      ...init,
+    })
   } catch {
     throw new ApiError(
       'Could not reach the AI server. Make sure it is running with "npm run dev".',
@@ -140,6 +185,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       /* keep the default message */
     }
+    if (response.status === 401) onUnauthorized?.()
     throw new ApiError(detail, response.status)
   }
 
@@ -160,6 +206,42 @@ function postJson<T>(path: string, body: unknown): Promise<T> {
 
 export function checkHealth(): Promise<HealthResponse> {
   return request<HealthResponse>('/health')
+}
+
+/* ------------------------------------------------------------------ */
+/* Accounts                                                            */
+/* ------------------------------------------------------------------ */
+
+export function registerAccount(
+  name: string,
+  email: string,
+  password: string,
+): Promise<AuthResponse> {
+  return postJson<AuthResponse>('/api/auth/register', { name, email, password })
+}
+
+export function loginAccount(email: string, password: string): Promise<AuthResponse> {
+  return postJson<AuthResponse>('/api/auth/login', { email, password })
+}
+
+export function logoutAccount(): Promise<{ ok: boolean }> {
+  return postJson<{ ok: boolean }>('/api/auth/logout', {})
+}
+
+/** Resolves the signed-in account, or null when the cookie is missing or expired. */
+export function fetchCurrentUser(): Promise<{ user: User | null }> {
+  return request<{ user: User | null }>('/api/auth/me')
+}
+
+export function fetchRetention(): Promise<RetentionPolicy> {
+  return request<RetentionPolicy>('/api/auth/retention')
+}
+
+export function listConversations(): Promise<{
+  conversations: { id: string; title: string; created_at: string; updated_at: string }[]
+  max_conversations: number
+}> {
+  return request('/api/conversations')
 }
 
 /* ------------------------------------------------------------------ */
@@ -200,6 +282,8 @@ export function uploadReport(
   return new Promise<UploadResponse>((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     xhr.open('POST', `${BASE}/api/orayan/upload`)
+    // Required so the session cookie travels with the upload.
+    xhr.withCredentials = true
 
     xhr.upload.addEventListener('progress', (event) => {
       if (event.lengthComputable && onProgress) {
@@ -218,6 +302,7 @@ export function uploadReport(
         resolve(body as UploadResponse)
       } else {
         const detail = (body as { detail?: string })?.detail
+        if (xhr.status === 401) onUnauthorized?.()
         reject(new ApiError(detail ?? `Upload failed (${xhr.status})`, xhr.status))
       }
     })
