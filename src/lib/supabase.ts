@@ -50,7 +50,3 @@ export function describeError(error: unknown): string {
   }
   return 'Something went wrong. Please try again.';
 }
-
-/** Base URL of the local Python AI service that holds the Gemini key. */
-export const AI_API_URL =
-  (import.meta.env.VITE_AI_API_URL as string | undefined)?.trim() || 'http://127.0.0.1:8000';
