@@ -10,9 +10,26 @@
 $ErrorActionPreference = 'Continue'
 
 $psql = 'C:\Program Files\PostgreSQL\17\bin\psql.exe'
-$envFile = Join-Path $PSScriptRoot '..\ai\.env'
-$url = (Get-Content $envFile | Where-Object { $_ -match '^DATABASE_URL=' } | Select-Object -First 1)
-$url = ($url -replace '^DATABASE_URL=', '').Trim()
+
+# A local PostgreSQL is only needed to build the throwaway database. The app
+# itself does not use one, so DATABASE_URL is read from the shell first and falls
+# back to ai/.env where it used to live.
+$url = $env:DATABASE_URL
+if (-not $url) {
+  $envFile = Join-Path $PSScriptRoot '..\ai\.env'
+  if (Test-Path $envFile) {
+    $line = Get-Content $envFile | Where-Object { $_ -match '^DATABASE_URL=' } | Select-Object -First 1
+    if ($line) { $url = ($line -replace '^DATABASE_URL=', '').Trim() }
+  }
+}
+
+if (-not $url) {
+  Write-Output 'No local PostgreSQL connection was found.'
+  Write-Output 'Set DATABASE_URL, for example:'
+  Write-Output '  $env:DATABASE_URL = "postgresql://postgres:YOUR_PASSWORD@127.0.0.1:5432/postgres"'
+  exit 1
+}
+
 $parsed = [Uri]$url
 $env:PGPASSWORD = $parsed.UserInfo.Split(':')[1]
 $dbHost = $parsed.Host

@@ -18,16 +18,25 @@ if (-not (Test-Path $psql)) {
   exit 1
 }
 
-# The local development connection string, read from ai/.env so the password is
-# never typed on a command line or printed.
-$envFile = Join-Path $PSScriptRoot '..\ai\.env'
-if (-not (Test-Path $envFile)) {
-  Write-Output 'ai/.env was not found, so the local connection details are unknown.'
-  exit 1
+# These checks need a local PostgreSQL to build the throwaway database in. The
+# app itself no longer uses one, so the connection string is not in ai/.env
+# anymore: set DATABASE_URL in your shell, or leave a DATABASE_URL line in
+# ai/.env for local development.
+$url = $env:DATABASE_URL
+if (-not $url) {
+  $envFile = Join-Path $PSScriptRoot '..\ai\.env'
+  if (Test-Path $envFile) {
+    $line = Get-Content $envFile | Where-Object { $_ -match '^DATABASE_URL=' } | Select-Object -First 1
+    if ($line) { $url = ($line -replace '^DATABASE_URL=', '').Trim() }
+  }
 }
 
-$url = (Get-Content $envFile | Where-Object { $_ -match '^DATABASE_URL=' } | Select-Object -First 1)
-$url = ($url -replace '^DATABASE_URL=', '').Trim()
+if (-not $url) {
+  Write-Output 'No local PostgreSQL connection was found.'
+  Write-Output 'Set DATABASE_URL, for example:'
+  Write-Output '  $env:DATABASE_URL = "postgresql://postgres:YOUR_PASSWORD@127.0.0.1:5432/postgres"'
+  exit 1
+}
 $parsed = [Uri]$url
 $env:PGPASSWORD = $parsed.UserInfo.Split(':')[1]
 $dbHost = $parsed.Host
