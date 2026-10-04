@@ -1,0 +1,40 @@
+# Blueprint for the Python service on Render.
+#
+# The React app goes to Vercel and this service goes to Render, because a report
+# PDF can be several megabytes and the frontend host caps request bodies well
+# below that. The browser is told where this lives with VITE_AI_BASE_URL, so
+# uploads never pass through the frontend host.
+#
+# Create the service with: New > Blueprint, point it at this repository, then
+# fill in the values below. Render reads them as environment variables and they
+# never touch Git.
+
+services:
+  - type: web
+    name: connect-ai
+    runtime: docker
+    dockerfilePath: ./ai/Dockerfile
+    dockerContext: ./ai
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+
+      # Optional but recommended. Supabase Dashboard > Settings > API > JWT
+      # Settings. With this the token is checked locally; without it every
+      # request asks Supabase instead, which works but is slower.
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+
+      # The deployed site's own address, so the browser is allowed to call this
+      # service. Comma separated. Left unset, only localhost is allowed.
+      - key: AI_ALLOWED_ORIGINS
+        sync: false
+
+      # The free plan sleeps after inactivity, so the first request after a
+      # quiet period can take about 30 seconds while it wakes up.

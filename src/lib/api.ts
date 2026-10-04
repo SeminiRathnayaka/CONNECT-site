@@ -4,13 +4,19 @@
  * In development Vite proxies /api and /health to http://127.0.0.1:8000, so
  * requests are same-origin and no CORS handling is needed here.
  *
+ * Once the site is deployed that proxy is gone, so VITE_AI_BASE_URL points at
+ * the host running the Python service and requests go straight there. It is
+ * deliberately not routed through the frontend host: a rewrite proxy would still
+ * hit that host's request body limit, which is well under the size of the report
+ * PDFs people upload.
+ *
  * Accounts live in Supabase, not here. Every request carries the signed-in
  * person's access token as a bearer header, and the backend rejects anything
  * that is not a valid token, so there is no session cookie and no password in
  * the browser.
  */
 
-const BASE = ''
+const BASE = (import.meta.env.VITE_AI_BASE_URL ?? '').replace(/\/+$/, '')
 
 export type Language = 'en' | 'si'
 

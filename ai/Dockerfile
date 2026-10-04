@@ -9,4 +9,6 @@ COPY . .
 
 EXPOSE 8000
 
-CMD ["python", "app/main.py"]
+# app/main.py is an interactive command line chatbot and would sit waiting for
+# input forever, so the server has to be started explicitly.
+CMD ["uvicorn", "app.server:app", "--host", "0.0.0.0", "--port", "8000"]
