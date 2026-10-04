@@ -4,35 +4,15 @@
  * In development Vite proxies /api and /health to http://127.0.0.1:8000, so
  * requests are same-origin and no CORS handling is needed here.
  *
- * Sign-in is a real server-side account: the server sets an HttpOnly session
- * cookie, so every request must send cookies with `credentials: 'include'`.
- * The password is never stored in the browser.
+ * Accounts live in Supabase, not here. Every request carries the signed-in
+ * person's access token as a bearer header, and the backend rejects anything
+ * that is not a valid token, so there is no session cookie and no password in
+ * the browser.
  */
 
 const BASE = ''
 
 export type Language = 'en' | 'si'
-
-/* ------------------------------------------------------------------ */
-/* Account types                                                       */
-/* ------------------------------------------------------------------ */
-
-export interface User {
-  id: string
-  email: string
-  name: string
-  /** Date the account was created, as YYYY-MM-DD. Empty on older responses. */
-  created_at?: string
-}
-
-export interface AuthResponse {
-  user: User
-}
-
-export interface RetentionPolicy {
-  max_conversations: number
-  report_retention_days: number
-}
 
 /* ------------------------------------------------------------------ */
 /* Shared shapes                                                       */
@@ -210,42 +190,6 @@ export function checkHealth(): Promise<HealthResponse> {
 
 /* ------------------------------------------------------------------ */
 /* Accounts                                                            */
-/* ------------------------------------------------------------------ */
-
-export function registerAccount(
-  name: string,
-  email: string,
-  password: string,
-): Promise<AuthResponse> {
-  return postJson<AuthResponse>('/api/auth/register', { name, email, password })
-}
-
-export function loginAccount(email: string, password: string): Promise<AuthResponse> {
-  return postJson<AuthResponse>('/api/auth/login', { email, password })
-}
-
-export function logoutAccount(): Promise<{ ok: boolean }> {
-  return postJson<{ ok: boolean }>('/api/auth/logout', {})
-}
-
-/** Resolves the signed-in account, or null when the cookie is missing or expired. */
-export function fetchCurrentUser(): Promise<{ user: User | null }> {
-  return request<{ user: User | null }>('/api/auth/me')
-}
-
-export function fetchRetention(): Promise<RetentionPolicy> {
-  return request<RetentionPolicy>('/api/auth/retention')
-}
-
-export function listConversations(): Promise<{
-  conversations: { id: string; title: string; created_at: string; updated_at: string }[]
-  max_conversations: number
-}> {
-  return request('/api/conversations')
-}
-
-/* ------------------------------------------------------------------ */
-/* Baymax chat                                                         */
 /* ------------------------------------------------------------------ */
 
 export function sendChat(

@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import type { Session, User as SupabaseUser } from '@supabase/supabase-js';
 import type { User } from '../types';
 import { describeError, isSupabaseConfigured, supabase, SUPABASE_SETUP_MESSAGE } from '../lib/supabase';
+import { setUnauthorizedHandler } from '../lib/api';
 
 interface AuthContextValue {
   user: User | null;
@@ -193,6 +194,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (event === 'PASSWORD_RECOVERY') setRecoveringPassword(true);
     });
     return () => data.subscription.unsubscribe();
+  }, []);
+
+  // The backend answers 401 when the access token has expired or been revoked.
+  // Without this the request just fails silently and the page sits there looking
+  // broken, so the session is dropped and the person is sent back to the login
+  // screen where they can sign in again.
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      void supabase.auth.signOut();
+    });
+    return () => setUnauthorizedHandler(null);
   }, []);
 
   const value = useMemo(
