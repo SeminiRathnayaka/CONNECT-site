@@ -48,7 +48,7 @@ comment on table public.profiles is 'Public part of a user account. Never stores
 -- ---------------------------------------------------------------------
 create table if not exists public.family_members (
   id            uuid primary key default gen_random_uuid(),
-  owner_id      uuid        not null references auth.users(id) on delete cascade,
+  owner_id      uuid        not null default auth.uid() references auth.users(id) on delete cascade,
   full_name     text        not null,
   relationship  text        not null default 'Other',
   date_of_birth date,
@@ -79,7 +79,7 @@ create index if not exists family_members_owner_idx on public.family_members(own
 -- ---------------------------------------------------------------------
 create table if not exists public.appointments (
   id               uuid primary key default gen_random_uuid(),
-  owner_id         uuid        not null references auth.users(id) on delete cascade,
+  owner_id         uuid        not null default auth.uid() references auth.users(id) on delete cascade,
   -- null means the appointment is for the account holder themselves.
   member_id        uuid references public.family_members(id) on delete set null,
   doctor           text        not null,
@@ -105,7 +105,7 @@ create index if not exists appointments_owner_date_idx
 -- ---------------------------------------------------------------------
 create table if not exists public.medications (
   id          uuid primary key default gen_random_uuid(),
-  owner_id    uuid        not null references auth.users(id) on delete cascade,
+  owner_id    uuid        not null default auth.uid() references auth.users(id) on delete cascade,
   member_id   uuid references public.family_members(id) on delete set null,
   name        text        not null,
   dosage      text        not null default '',
@@ -131,7 +131,7 @@ create index if not exists medications_owner_idx on public.medications(owner_id)
 -- ---------------------------------------------------------------------
 create table if not exists public.health_records (
   id          uuid primary key default gen_random_uuid(),
-  owner_id    uuid        not null references auth.users(id) on delete cascade,
+  owner_id    uuid        not null default auth.uid() references auth.users(id) on delete cascade,
   member_id   uuid references public.family_members(id) on delete set null,
   title       text        not null,
   category    text        not null default 'Medical Reports',
@@ -154,7 +154,7 @@ create index if not exists health_records_owner_idx
 -- ---------------------------------------------------------------------
 create table if not exists public.symptom_entries (
   id         uuid primary key default gen_random_uuid(),
-  owner_id   uuid        not null references auth.users(id) on delete cascade,
+  owner_id   uuid        not null default auth.uid() references auth.users(id) on delete cascade,
   member_id  uuid references public.family_members(id) on delete set null,
   entry_date date        not null default current_date,
   symptom    text        not null,
@@ -174,7 +174,7 @@ create index if not exists symptom_entries_owner_idx
 -- ---------------------------------------------------------------------
 create table if not exists public.doctor_questions (
   id             uuid primary key default gen_random_uuid(),
-  owner_id       uuid        not null references auth.users(id) on delete cascade,
+  owner_id       uuid        not null default auth.uid() references auth.users(id) on delete cascade,
   appointment_id uuid references public.appointments(id) on delete cascade,
   text           text        not null,
   category       text        not null default 'General',
@@ -197,7 +197,7 @@ create table if not exists public.doctor_prep_notes (
 -- ---------------------------------------------------------------------
 create table if not exists public.emergency_contacts (
   id         uuid primary key default gen_random_uuid(),
-  owner_id   uuid        not null references auth.users(id) on delete cascade,
+  owner_id   uuid        not null default auth.uid() references auth.users(id) on delete cascade,
   name       text        not null,
   relation   text        not null default '',
   phone      text        not null,
@@ -212,7 +212,7 @@ create index if not exists emergency_contacts_owner_idx on public.emergency_cont
 -- ---------------------------------------------------------------------
 create table if not exists public.health_metrics (
   id          uuid primary key default gen_random_uuid(),
-  owner_id    uuid        not null references auth.users(id) on delete cascade,
+  owner_id    uuid        not null default auth.uid() references auth.users(id) on delete cascade,
   member_id   uuid references public.family_members(id) on delete set null,
   label       text        not null,
   value       text        not null default '',
@@ -234,7 +234,7 @@ create index if not exists health_metrics_owner_idx on public.health_metrics(own
 -- ---------------------------------------------------------------------
 create table if not exists public.notifications (
   id         uuid primary key default gen_random_uuid(),
-  owner_id   uuid        not null references auth.users(id) on delete cascade,
+  owner_id   uuid        not null default auth.uid() references auth.users(id) on delete cascade,
   title      text        not null,
   body       text        not null default '',
   type       text        not null default 'system',
@@ -252,7 +252,7 @@ create index if not exists notifications_owner_idx
 -- ---------------------------------------------------------------------
 create table if not exists public.reports (
   id           uuid primary key default gen_random_uuid(),
-  owner_id     uuid        not null references auth.users(id) on delete cascade,
+  owner_id     uuid        not null default auth.uid() references auth.users(id) on delete cascade,
   member_id    uuid references public.family_members(id) on delete set null,
   filename     text        not null,
   -- Path inside the private 'reports' storage bucket, never a public URL.
@@ -312,7 +312,7 @@ create table if not exists public.term_explanations (
 -- ---------------------------------------------------------------------
 create table if not exists public.chat_conversations (
   id         uuid primary key default gen_random_uuid(),
-  owner_id   uuid        not null references auth.users(id) on delete cascade,
+  owner_id   uuid        not null default auth.uid() references auth.users(id) on delete cascade,
   title      text        not null default '',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -359,67 +359,74 @@ alter table public.chat_conversations  enable row level security;
 alter table public.chat_messages       enable row level security;
 
 
+-- ---------------------------------------------------------------------
+-- WHY owner_id DEFAULTS TO auth.uid()
+-- ---------------------------------------------------------------------
+-- Every private table carries `owner_id uuid not null default auth.uid()`.
+--
+-- The default is what makes the app work: the browser never sends owner_id,
+-- because the signed-in account is not something the client should get to
+-- choose. Letting the database fill it in from the request's own JWT means a
+-- row can only ever be created under the account that is making the request.
+--
+-- It is not a hole. A client can still send an explicit owner_id, and the
+-- policies below reject that with `with check (owner_id = auth.uid())`. The
+-- default only decides the value when the client says nothing.
+--
+-- ---------------------------------------------------------------------
+
+
 -- Profiles: a row is reachable only by the account it belongs to.
 drop policy if exists "profiles are private" on public.profiles;
 create policy "profiles are private" on public.profiles
-  for all
+  for all to authenticated
   using (id = auth.uid())
   with check (id = auth.uid());
 
 
--- Simple owner_id tables.
+-- Simple owner_id tables. Nothing here points at another person's record.
 drop policy if exists "family_members are private" on public.family_members;
 create policy "family_members are private" on public.family_members
-  for all using (owner_id = auth.uid()) with check (owner_id = auth.uid());
-
-drop policy if exists "appointments are private" on public.appointments;
-create policy "appointments are private" on public.appointments
-  for all using (owner_id = auth.uid()) with check (owner_id = auth.uid());
-
-drop policy if exists "medications are private" on public.medications;
-create policy "medications are private" on public.medications
-  for all using (owner_id = auth.uid()) with check (owner_id = auth.uid());
-
-drop policy if exists "health_records are private" on public.health_records;
-create policy "health_records are private" on public.health_records
-  for all using (owner_id = auth.uid()) with check (owner_id = auth.uid());
-
-drop policy if exists "symptom_entries are private" on public.symptom_entries;
-create policy "symptom_entries are private" on public.symptom_entries
-  for all using (owner_id = auth.uid()) with check (owner_id = auth.uid());
-
-drop policy if exists "doctor_questions are private" on public.doctor_questions;
-create policy "doctor_questions are private" on public.doctor_questions
-  for all using (owner_id = auth.uid()) with check (owner_id = auth.uid());
-
-drop policy if exists "emergency_contacts are private" on public.emergency_contacts;
-create policy "emergency_contacts are private" on public.emergency_contacts
-  for all using (owner_id = auth.uid()) with check (owner_id = auth.uid());
-
-drop policy if exists "health_metrics are private" on public.health_metrics;
-create policy "health_metrics are private" on public.health_metrics
-  for all using (owner_id = auth.uid()) with check (owner_id = auth.uid());
+  for all to authenticated
+  using (owner_id = auth.uid()) with check (owner_id = auth.uid());
 
 drop policy if exists "notifications are private" on public.notifications;
 create policy "notifications are private" on public.notifications
-  for all using (owner_id = auth.uid()) with check (owner_id = auth.uid());
+  for all to authenticated
+  using (owner_id = auth.uid()) with check (owner_id = auth.uid());
 
 
--- Doctor prep notes are keyed directly by account id.
+-- Doctor prep notes are keyed directly by account id, so there is nothing to
+-- cross-check beyond the key itself.
 drop policy if exists "doctor_prep_notes are private" on public.doctor_prep_notes;
 create policy "doctor_prep_notes are private" on public.doctor_prep_notes
-  for all using (owner_id = auth.uid()) with check (owner_id = auth.uid());
+  for all to authenticated
+  using (owner_id = auth.uid()) with check (owner_id = auth.uid());
 
 
--- Reports: private, and readable only by the owner.
-drop policy if exists "reports are private" on public.reports;
-create policy "reports are private" on public.reports
-  for all using (owner_id = auth.uid()) with check (owner_id = auth.uid());
+-- Reports deliberately have no policy in this block. Reports carry a member_id,
+-- so their policy is generated further down with the other member_id tables.
+-- A second, looser policy here would be OR-ed with that one by PostgreSQL and
+-- quietly undo the member check.
+
+
+-- Emergency contacts are private to the account that saved them.
+drop policy if exists "emergency_contacts are private" on public.emergency_contacts;
+create policy "emergency_contacts are private" on public.emergency_contacts
+  for all to authenticated
+  using (owner_id = auth.uid()) with check (owner_id = auth.uid());
+
+
+-- Chat: conversations belong to an account, messages inherit that.
+drop policy if exists "chat_conversations are private" on public.chat_conversations;
+create policy "chat_conversations are private" on public.chat_conversations
+  for all to authenticated
+  using (owner_id = auth.uid()) with check (owner_id = auth.uid());
 
 -- Report child tables: access follows the parent report.
 drop policy if exists "report_tests follow the report" on public.report_tests;
 create policy "report_tests follow the report" on public.report_tests
-  for all
+  for all to authenticated
   using (exists (select 1 from public.reports r
                  where r.id = report_id and r.owner_id = auth.uid()))
   with check (exists (select 1 from public.reports r
@@ -427,7 +434,7 @@ create policy "report_tests follow the report" on public.report_tests
 
 drop policy if exists "report_summaries follow the report" on public.report_summaries;
 create policy "report_summaries follow the report" on public.report_summaries
-  for all
+  for all to authenticated
   using (exists (select 1 from public.reports r
                  where r.id = report_id and r.owner_id = auth.uid()))
   with check (exists (select 1 from public.reports r
@@ -435,21 +442,73 @@ create policy "report_summaries follow the report" on public.report_summaries
 
 drop policy if exists "report_explanations follow the report" on public.report_explanations;
 create policy "report_explanations follow the report" on public.report_explanations
-  for all
+  for all to authenticated
   using (exists (select 1 from public.reports r
                  where r.id = report_id and r.owner_id = auth.uid()))
   with check (exists (select 1 from public.reports r
                       where r.id = report_id and r.owner_id = auth.uid()));
 
 
--- Chat: conversations belong to an account, messages inherit that.
-drop policy if exists "chat_conversations are private" on public.chat_conversations;
-create policy "chat_conversations are private" on public.chat_conversations
-  for all using (owner_id = auth.uid()) with check (owner_id = auth.uid());
+-- ---------------------------------------------------------------------
+-- Tables that point at another row
+-- ---------------------------------------------------------------------
+-- Six tables carry a member_id (a family member) and doctor_questions carries
+-- an appointment_id. If the policy only checked owner_id, a signed-in person
+-- could store their own row with a member_id belonging to somebody else: their
+-- own record would then sit inside another person's family. Nothing would be
+-- readable today, but it leaves a cross-account pointer in the database for a
+-- future join to leak through, and the resulting foreign key error confirms
+-- that a given id exists.
+--
+-- So an insert or update must also prove the row it points at is owned by the
+-- same account.
 
+
+-- The member_id tables all follow one rule. Written in a loop so the six
+-- policies cannot drift apart; the generated text is listed in the audit notes.
+do $$
+declare
+  target text;
+begin
+  foreach target in array array[
+    'appointments', 'medications', 'health_records',
+    'symptom_entries', 'health_metrics', 'reports'
+  ] loop
+    execute format('drop policy if exists "%1$I keep their family" on public.%1$I', target);
+    execute format(
+      'create policy "%1$I keep their family" on public.%1$I
+         for all to authenticated
+         using (owner_id = auth.uid())
+         with check (
+           owner_id = auth.uid()
+           and (
+             member_id is null
+             or exists (select 1 from public.family_members m
+                        where m.id = member_id and m.owner_id = auth.uid())
+           )
+         )', target);
+  end loop;
+end $$;
+
+-- Doctor questions hang off an appointment, which must be the same person's.
+drop policy if exists "doctor_questions keep their appointments" on public.doctor_questions;
+create policy "doctor_questions keep their appointments" on public.doctor_questions
+  for all to authenticated
+  using (owner_id = auth.uid())
+  with check (
+    owner_id = auth.uid()
+    and (
+      appointment_id is null
+      or exists (select 1 from public.appointments a
+                 where a.id = appointment_id and a.owner_id = auth.uid())
+    )
+  );
+
+
+-- Chat messages inherit access from the conversation they belong to.
 drop policy if exists "chat_messages follow the conversation" on public.chat_messages;
 create policy "chat_messages follow the conversation" on public.chat_messages
-  for all
+  for all to authenticated
   using (exists (select 1 from public.chat_conversations c
                  where c.id = conversation_id and c.owner_id = auth.uid()))
   with check (exists (select 1 from public.chat_conversations c
@@ -457,7 +516,8 @@ create policy "chat_messages follow the conversation" on public.chat_messages
 
 
 -- Term definitions are shared reference text, not personal data, so any
--- signed-in user can read them. Only signed-in users, never anonymous.
+-- signed-in user can read them and nobody may rewrite somebody else's row.
+-- The service caches these in memory, so this table stays empty in practice.
 drop policy if exists "signed-in users read terms" on public.term_explanations;
 create policy "signed-in users read terms" on public.term_explanations
   for select to authenticated
@@ -469,10 +529,10 @@ create policy "signed-in users cache terms" on public.term_explanations
   with check (true);
 
 drop policy if exists "signed-in users update terms" on public.term_explanations;
-create policy "signed-in users update terms" on public.term_explanations
-  for update to authenticated
-  using (true)
-  with check (true);
+drop policy if exists "signed-in users delete terms" on public.term_explanations;
+
+-- Note: there is no update or delete policy on purpose, so those operations are
+-- denied to everyone. A shared cache entry cannot be edited by another account.
 
 
 -- =====================================================================
@@ -485,7 +545,9 @@ create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
 security definer
-set search_path = public
+-- Empty search path plus fully qualified names, so nothing on the path can be
+-- swapped for a look-alike function by whoever controls the database role.
+set search_path = ''
 as $$
 begin
   insert into public.profiles (id, full_name, email)
@@ -543,6 +605,10 @@ insert into storage.buckets (id, name, public)
 values ('reports', 'reports', false)
 on conflict (id) do update set public = false;
 
+-- Supabase already enables this, but stating it keeps the file self-contained
+-- and makes the policies below meaningful on a fresh database.
+alter table storage.objects enable row level security;
+
 drop policy if exists "users read their own reports" on storage.objects;
 create policy "users read their own reports" on storage.objects
   for select to authenticated
@@ -559,10 +625,17 @@ create policy "users upload their own reports" on storage.objects
     and (storage.foldername(name))[1] = auth.uid()::text
   );
 
-drop policy if exists "users delete their own reports" on storage.objects;
-create policy "users delete their own reports" on storage.objects
+-- Updating a file also needs the row to stay inside the caller's own folder.
+-- Both USING and WITH CHECK are written out: WITH CHECK is what stops an update
+-- from renaming an object into somebody else's directory.
+drop policy if exists "users update their own reports" on storage.objects;
+create policy "users update their own reports" on storage.objects
   for update to authenticated
   using (
+    bucket_id = 'reports'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  )
+  with check (
     bucket_id = 'reports'
     and (storage.foldername(name))[1] = auth.uid()::text
   );
@@ -574,3 +647,17 @@ create policy "users remove their own reports" on storage.objects
     bucket_id = 'reports'
     and (storage.foldername(name))[1] = auth.uid()::text
   );
+
+
+-- =====================================================================
+-- WHY FORCE ROW LEVEL SECURITY IS NOT USED HERE
+-- =====================================================================
+-- FORCE makes the table owner subject to the policies too. These tables are
+-- owned by the same role that runs handle_new_user(), which is SECURITY
+-- DEFINER, so signing somebody up would fail: the trigger could not insert the
+-- profile row it is there to create.
+--
+-- It is also unnecessary. Row Level Security is enforced for anon and
+-- authenticated, which is every role the browser can obtain from the anon key.
+-- Nothing in this project connects to Postgres as the owner except the
+-- migrations you run yourself.

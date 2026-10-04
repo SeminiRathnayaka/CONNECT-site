@@ -8,6 +8,9 @@
     "dev:web": "vite",
     "dev:ai": "cd ai && ../.venv/Scripts/python.exe -m app.server",
     "setup": "node scripts/setup.mjs",
+    "test:rls": "node scripts/test-rls.mjs",
+    "test:schema": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-schema.ps1",
+    "test:rls:local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-rls-local.ps1",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview"

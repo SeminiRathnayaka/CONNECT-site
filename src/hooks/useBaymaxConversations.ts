@@ -138,9 +138,10 @@ export function useBaymaxConversations(): [
       }
 
       for (const conversation of kept) {
+// owner_id is not sent: the column defaults to the signed-in account.
         // The cast matches the convention used in useCollection.ts: the hand-written
-// Database type widens inserts to Partial<Row>, which the client rejects.
-await supabase.from('chat_conversations').upsert({
+        // Database type widens inserts to Partial<Row>, which the client rejects.
+        await supabase.from('chat_conversations').upsert({
           id: conversation.id,
           title: conversation.title,
           updated_at: conversation.updatedAt,
