@@ -349,7 +349,7 @@ async function checkIsolation(actor, actorName, victim, victimName) {
 }
 
 /** Private files, which the app treats as just as sensitive as the rows. */
-async function checkStorage(actor, actorName, victim, victimName) {
+async function checkStorage(actor, actorName, victim, victimName, victimClient) {
   console.log(`\n${actorName} against ${victimName}'s files`)
 
   const own = await actor.storage.from('reports').download(victim.filePath)
@@ -375,29 +375,41 @@ async function checkStorage(actor, actorName, victim, victimName) {
     uploadError ? 'refused' : 'ACCEPTED - this is a problem',
   )
 
+  // Moving it into the attacker's own real folder, so the only thing that can
+  // refuse this is the policy on the file's current location.
+  const { data: actorUser } = await actor.auth.getUser()
   const { error: moveError } = await actor.storage
     .from('reports')
-    .move(victim.filePath, `${actorName.replace(/\s/g, '')}/stolen.pdf`)
+    .move(victim.filePath, `${actorUser.user.id}/stolen.pdf`)
   check(
     `${actorName} cannot move ${victimName}'s file into its own folder`,
     Boolean(moveError),
     moveError ? 'refused' : 'MOVED - this is a problem',
   )
 
+  // Storage answers 200 with an empty result when a policy filtered the row out,
+  // so "no error" proves nothing on its own. The file has to still be there for
+  // its owner afterwards, which is the only way to tell a blocked delete from a
+  // successful one.
   const { error: removeError } = await actor.storage.from('reports').remove([victim.filePath])
+  const survivor = await victimClient.storage.from('reports').download(victim.filePath)
+  const survived = !survivor.error
   check(
     `${actorName} cannot delete ${victimName}'s file`,
-    Boolean(removeError),
-    removeError ? 'refused' : 'DELETED - this is a problem',
+    survived,
+    survived
+      ? 'still there for its owner'
+      : `${removeError?.message ?? 'gone without an error'} - this is a problem`,
   )
 
-  // And the owner must still be able to do all of it, so the checks above are
-  // not passing simply because nothing is reachable at all.
-  const mine = await actor.storage.from('reports').download(victim.filePath)
+  // The positive control. Every check above is a "nothing happened" result, so
+  // the owner reading the file back proves the bucket is reachable and that
+  // none of the attempts quietly destroyed it.
+  const stillReadable = await victimClient.storage.from('reports').download(victim.filePath)
   check(
-    `${actorName} note: this file belongs to ${victimName}, so it should be refused`,
-    Boolean(mine.error),
-    mine.error ? 'refused as expected' : 'DOWNLOADED - this is a problem',
+    `${victimName} can still read their own file afterwards`,
+    !stillReadable.error && Boolean(stillReadable.data),
+    stillReadable.error ? stillReadable.error.message : 'downloaded',
   )
 }
 
@@ -469,8 +481,8 @@ for (const [label, session, own] of [
 /* 2 and 3. Isolation between the two accounts. */
 await checkIsolation(a.client, 'User A', dataB, 'User B')
 await checkIsolation(b.client, 'User B', dataA, 'User A')
-await checkStorage(a.client, 'User A', dataB, 'User B')
-await checkStorage(b.client, 'User B', dataA, 'User A')
+await checkStorage(a.client, 'User A', dataB, 'User B', b.client)
+await checkStorage(b.client, 'User B', dataA, 'User A', a.client)
 
 /* Cross-account references must be refused. */
 console.log('\nCross-account references')
@@ -530,11 +542,14 @@ for (const table of ALL_TABLES) {
 }
 
 {
-  const { error } = await anonymous.storage.from('reports').list(dataA.folder)
+  // Same as above: a refused listing comes back as a successful empty result,
+  // not an error, so count the rows instead of looking for a failure.
+  const { data, error } = await anonymous.storage.from('reports').list(dataA.folder)
+  const entries = data?.length ?? 0
   check(
     'signed-out visitor cannot list report files',
-    Boolean(error),
-    error ? 'refused' : 'ALLOWED - this is a problem',
+    entries === 0,
+    error ? error.message : `${entries} entries`,
   )
 }
 {
