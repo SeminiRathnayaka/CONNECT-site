@@ -261,7 +261,18 @@ async function seedPrivateData(client, userId, tag) {
   const { error: uploadError } = await client.storage
     .from('reports')
     .upload(filePath, new Blob(['private pdf']), { upsert: true })
-  if (uploadError) fail('the report file', uploadError)
+  if (uploadError) {
+    if (/bucket not found/i.test(uploadError.message)) {
+      throw new Error(
+        'The private "reports" bucket does not exist, so none of the file policies can be tested.\n' +
+        'supabase/schema.sql creates it, but only if the role running it can write storage.buckets.\n' +
+        'Either create it by hand (Storage > New bucket, name "reports", Public OFF) or run\n' +
+        '  grant supabase_storage_admin to postgres;\n' +
+        'in the SQL Editor and then re-run supabase/schema.sql.',
+      )
+    }
+    fail('the report file', uploadError)
+  }
 
   return { ...rows, filePath, folder: userId, tag }
 }
