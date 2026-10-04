@@ -1,4 +1,4 @@
-﻿# Validates supabase/schema.sql against a throwaway local database.
+# Validates supabase/schema.sql against a throwaway local database.
 #
 # The schema references auth.users and storage.objects, which only exist on
 # Supabase, so scripts/schema-stubs.sql provides stand-ins. Nothing here touches
@@ -129,7 +129,72 @@ if ($problems -eq 0) {
   }
 }
 
-# 4. Clean up.
+# 5. The Storage guard.
+#
+# A real Supabase SQL editor cannot always touch storage.objects: newer projects
+# own it as supabase_storage_admin, and the migration died with "must be owner of
+# table objects" before the section was guarded. This replays that situation by
+# running the whole file as an ordinary role that owns nothing in storage, and
+# requires the run to finish rather than abort.
+if ($problems -eq 0) {
+    # A fresh database, because the public tables have to be created by the role
+    # being tested for it to own them. That is the real situation on Supabase:
+    # the SQL editor role owns public.* because it creates them, but not
+    # storage.*.
+    $guardDb = 'connect_rls_guard'
+    & $psql -h $dbHost -p $dbPort -U $user -d postgres -v ON_ERROR_STOP=1 -q -c "drop database if exists $guardDb;" 2>&1 | Out-Null
+    & $psql -h $dbHost -p $dbPort -U $user -d postgres -v ON_ERROR_STOP=1 -q -c "create database $guardDb;" 2>&1 | Out-Null
+    & $psql -h $dbHost -p $dbPort -U $user -d $guardDb -v ON_ERROR_STOP=1 -q -f (Join-Path $PSScriptRoot 'schema-stubs.sql') 2>&1 | Out-Null
+
+    $guardSetup = @'
+do $$
+begin
+  if not exists (select 1 from pg_roles where rolname = 'schema_tester') then
+    create role schema_tester nologin;
+  end if;
+end $$;
+
+grant usage, create on schema public to schema_tester;
+grant usage on schema auth, storage to schema_tester;
+grant execute on all functions in schema auth to schema_tester;
+-- The real SQL editor role can reference auth.users. Without this the guard role
+-- fails on the foreign keys long before reaching the storage section.
+grant select, references on all tables in schema auth to schema_tester;
+-- ...and it creates the signup trigger on auth.users, so it needs TRIGGER too.
+grant trigger on all tables in schema auth to schema_tester;
+'@
+    $setup = & $psql -h $dbHost -p $dbPort -U $user -d $guardDb -v ON_ERROR_STOP=1 -q -t -A -c $guardSetup 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      $problems++
+      Write-Output "PROBLEM: could not prepare the storage-guard role: $setup"
+    }
+    else {
+      $runner = Join-Path $env:TEMP 'connect-schema-guard.sql'
+      # psql's \i wants forward slashes, otherwise it reads the drive letter as
+      # part of the filename and reports a misleading permission error.
+      $schemaPath = ((Resolve-Path (Join-Path $PSScriptRoot '..\supabase\schema.sql')).Path -replace '\\', '/')
+      "set role schema_tester;" | Set-Content $runner
+      "\i $schemaPath" | Add-Content $runner
+
+      $guardOutput = & $psql -h $dbHost -p $dbPort -U $user -d $guardDb -v ON_ERROR_STOP=1 -q -f $runner 2>&1
+      if ($LASTEXITCODE -ne 0) {
+        $problems++
+        Write-Output 'PROBLEM: schema.sql aborts for a role that does not own storage.objects:'
+        $guardOutput | ForEach-Object { Write-Output "  $_" }
+      }
+      elseif ($guardOutput -match 'cannot manage storage\.objects') {
+        Write-Output 'schema.sql warns about the storage policies instead of aborting'
+      }
+      else {
+        $problems++
+        Write-Output 'PROBLEM: the storage guard did not report the missing access, so it would fail silently on Supabase'
+      }
+      Remove-Item $runner -ErrorAction SilentlyContinue
+    }
+    & $psql -h $dbHost -p $dbPort -U $user -d postgres -v ON_ERROR_STOP=1 -q -c "drop database if exists $guardDb;" 2>&1 | Out-Null
+}
+
+# 6. Clean up.
 & $psql -h $dbHost -p $dbPort -U $user -d postgres -v ON_ERROR_STOP=1 -q -c "drop database if exists $scratch;" 2>&1 | Out-Null
 Remove-Item Env:\PGPASSWORD -ErrorAction SilentlyContinue
 

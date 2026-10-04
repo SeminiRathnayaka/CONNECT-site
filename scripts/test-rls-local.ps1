@@ -68,6 +68,19 @@ if ($LASTEXITCODE -ne 0) { Write-Output 'schema failed'; Invoke-Psql "drop datab
 & $psql -h $dbHost -p $dbPort -U $dbUser -d $scratch -v ON_ERROR_STOP=1 -q -f (Join-Path $PSScriptRoot 'rls-test-functions.sql') 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) { Write-Output 'test helpers failed'; Invoke-Psql "drop database if exists $scratch;" | Out-Null; exit 1 }
 
+# The Storage policies are inert without this, and a failure that deep inside the
+# storage checks is very hard to read, so it is asserted up front.
+$storageRls = @(Invoke-Psql @'
+select relrowsecurity from pg_class c
+  join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = 'storage' and c.relname = 'objects';
+'@ -Database $scratch)[0]
+
+if ($storageRls -ne 't') {
+  Invoke-Psql "drop database if exists $scratch;" | Out-Null
+  throw 'Row Level Security is off on storage.objects, so none of the file policies apply.'
+}
+
 # The browser connects as these roles, so they need the same table privileges
 # Supabase grants.
 Invoke-Psql @'

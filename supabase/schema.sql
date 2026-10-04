@@ -1,5 +1,5 @@
 -- =====================================================================
--- CONNECT — database schema for Supabase
+-- CONNECT â€” database schema for Supabase
 -- =====================================================================
 -- Run this once in the Supabase dashboard:
 --   Dashboard -> your project -> SQL Editor -> New query -> paste -> Run
@@ -601,52 +601,111 @@ end $$;
 -- Files are stored under "<user id>/<filename>", and the policies below
 -- only ever let the owner of that first folder segment reach it.
 
-insert into storage.buckets (id, name, public)
-values ('reports', 'reports', false)
-on conflict (id) do update set public = false;
+-- The whole Storage section is guarded. On newer projects Supabase owns
+-- storage.objects as supabase_storage_admin rather than as the role the SQL
+-- editor runs as, so touching it can fail with "must be owner of table objects"
+-- or "must be owner of table buckets". An unguarded failure there rolls back the
+-- tables, policies and triggers that came before it, which is a much worse
+-- outcome than a warning.
+--
+-- So the access is probed first. If it is there the policies are created; if it
+-- is not, the migration still finishes and says exactly what is missing.
+do $$
+declare
+  objects_owner text;
+  buckets_owner text;
+  can_manage_objects boolean := false;
+  can_manage_buckets boolean := false;
+begin
+  select pg_get_userbyid(c.relowner) into objects_owner
+  from pg_class c
+  join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = 'storage' and c.relname = 'objects';
 
--- Supabase already enables this, but stating it keeps the file self-contained
--- and makes the policies below meaningful on a fresh database.
-alter table storage.objects enable row level security;
+  select pg_get_userbyid(c.relowner) into buckets_owner
+  from pg_class c
+  join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = 'storage' and c.relname = 'buckets';
 
-drop policy if exists "users read their own reports" on storage.objects;
-create policy "users read their own reports" on storage.objects
-  for select to authenticated
-  using (
-    bucket_id = 'reports'
-    and (storage.foldername(name))[1] = auth.uid()::text
-  );
+  -- pg_has_role with USAGE covers both owning the table outright and being a
+  -- member of the role that owns it.
+  if objects_owner is not null then
+    can_manage_objects := pg_has_role(current_user, objects_owner, 'USAGE');
+  end if;
+  if buckets_owner is not null then
+    can_manage_buckets := pg_has_role(current_user, buckets_owner, 'USAGE');
+  end if;
 
-drop policy if exists "users upload their own reports" on storage.objects;
-create policy "users upload their own reports" on storage.objects
-  for insert to authenticated
-  with check (
-    bucket_id = 'reports'
-    and (storage.foldername(name))[1] = auth.uid()::text
-  );
+  -- Row Level Security has to be on for any of this to matter. Supabase enables
+  -- it by default; it is only read here, never changed.
+  if not exists (
+    select 1
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'storage'
+      and c.relname = 'objects'
+      and c.relrowsecurity
+  ) then
+    raise warning
+      'Row Level Security is OFF on storage.objects, so no file policy will apply. Turn it on from Storage settings before trusting file privacy.';
+  end if;
 
--- Updating a file also needs the row to stay inside the caller's own folder.
--- Both USING and WITH CHECK are written out: WITH CHECK is what stops an update
--- from renaming an object into somebody else's directory.
-drop policy if exists "users update their own reports" on storage.objects;
-create policy "users update their own reports" on storage.objects
-  for update to authenticated
-  using (
-    bucket_id = 'reports'
-    and (storage.foldername(name))[1] = auth.uid()::text
-  )
-  with check (
-    bucket_id = 'reports'
-    and (storage.foldername(name))[1] = auth.uid()::text
-  );
+  if not can_manage_buckets then
+    raise warning
+      'This role cannot write storage.buckets (owner is %), so the private "reports" bucket was NOT created. Create it by hand: Storage > New bucket, name "reports", Public OFF.',
+      buckets_owner;
+  else
+    execute $b$insert into storage.buckets (id, name, public)
+           values ('reports', 'reports', false)
+           on conflict (id) do update set public = false$b$;
+  end if;
 
-drop policy if exists "users remove their own reports" on storage.objects;
-create policy "users remove their own reports" on storage.objects
-  for delete to authenticated
-  using (
-    bucket_id = 'reports'
-    and (storage.foldername(name))[1] = auth.uid()::text
-  );
+  if not can_manage_objects then
+    raise warning
+      'This role cannot manage storage.objects (owner is %), so the four file policies were NOT created. Add them under Storage > Policies > reports, or run: grant supabase_storage_admin to postgres; then re-run this file.',
+      objects_owner;
+    return;
+  end if;
+
+  execute 'drop policy if exists "users read their own reports" on storage.objects';
+  execute $p$create policy "users read their own reports" on storage.objects
+    for select to authenticated
+    using (
+      bucket_id = 'reports'
+      and (storage.foldername(name))[1] = auth.uid()::text
+    )$p$;
+
+  execute 'drop policy if exists "users upload their own reports" on storage.objects';
+  execute $p$create policy "users upload their own reports" on storage.objects
+    for insert to authenticated
+    with check (
+      bucket_id = 'reports'
+      and (storage.foldername(name))[1] = auth.uid()::text
+    )$p$;
+
+  -- Updating a file also needs the row to stay inside the caller's own folder.
+  -- Both USING and WITH CHECK are written out: WITH CHECK is what stops an update
+  -- from renaming an object into somebody else's directory.
+  execute 'drop policy if exists "users update their own reports" on storage.objects';
+  execute $p$create policy "users update their own reports" on storage.objects
+    for update to authenticated
+    using (
+      bucket_id = 'reports'
+      and (storage.foldername(name))[1] = auth.uid()::text
+    )
+    with check (
+      bucket_id = 'reports'
+      and (storage.foldername(name))[1] = auth.uid()::text
+    )$p$;
+
+  execute 'drop policy if exists "users remove their own reports" on storage.objects';
+  execute $p$create policy "users remove their own reports" on storage.objects
+    for delete to authenticated
+    using (
+      bucket_id = 'reports'
+      and (storage.foldername(name))[1] = auth.uid()::text
+    )$p$;
+end $$;
 
 
 -- =====================================================================

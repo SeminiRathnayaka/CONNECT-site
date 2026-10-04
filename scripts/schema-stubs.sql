@@ -43,6 +43,11 @@ create table storage.objects (
   name      text
 );
 
+-- Supabase has RLS enabled on this table out of the box, and the policies in
+-- schema.sql only work because of it. It has to be mirrored here or the local
+-- run would test a configuration that does not exist on a real project.
+alter table storage.objects enable row level security;
+
 -- Supabase's helper that splits an object path into its folders.
 create function storage.foldername(path text) returns text[]
   language sql immutable
