@@ -160,16 +160,23 @@ export function useCollection<TRow extends RowOf<TableName>, TModel>({
     [table],
   );
 
-  return {
-    items: useMemo(() => rows.map(map), [rows, map]),
-    loading,
-    error,
-    empty: loaded && !loading && rows.length === 0,
-    refresh,
-    create,
-    update,
-    remove,
-  };
+  // Memoised so the identity survives re-renders. Callers put this object in
+  // dependency arrays, and a fresh literal each render would rebuild every
+  // callback downstream on every render, which turns any effect that saves into
+  // an endless write loop.
+  return useMemo(
+    () => ({
+      items: rows.map(map),
+      loading,
+      error,
+      empty: loaded && !loading && rows.length === 0,
+      refresh,
+      create,
+      update,
+      remove,
+    }),
+    [rows, map, loading, error, loaded, refresh, create, update, remove],
+  );
 }
 
 /**

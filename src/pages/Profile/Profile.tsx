@@ -22,12 +22,26 @@ const genderOptions = [
   { value: 'Other', label: 'Other' },
 ];
 
-/** Turns the multiline textarea text into a clean list. */
-const toList = (value: string) =>
+/** Splits textarea text into one item per line, dropping blank lines. */
+const toItems = (value: string) =>
   value
     .split('\n')
     .map((item) => item.trim())
     .filter(Boolean);
+
+/**
+ * The same, but for the value being edited rather than stored.
+ *
+ * A single trailing blank line is kept on purpose. Without it, pressing Enter is
+ * undone by the very next keystroke and there is no way to start a new line:
+ * "Penicillin\n" collapses straight back to "Penicillin". Saving goes through
+ * toItems so that blank never reaches the database.
+ */
+const toEditableItems = (value: string) => {
+  const items = toItems(value);
+  if (items.length > 0 && value.endsWith('\n')) items.push('');
+  return items;
+};
 
 export default function Profile() {
   const { profile, loading, error, saveProfile } = useProfile();
@@ -61,10 +75,10 @@ export default function Profile() {
         gender: form.gender,
         bloodType: form.bloodType,
         address: form.address,
-        allergies: toList(form.allergies.join('\n')),
-        conditions: toList(form.conditions.join('\n')),
-        medications: toList(form.medications.join('\n')),
-        emergencyNotes: toList(form.emergencyNotes.join('\n')),
+        allergies: toItems(form.allergies.join('\n')),
+        conditions: toItems(form.conditions.join('\n')),
+        medications: toItems(form.medications.join('\n')),
+        emergencyNotes: toItems(form.emergencyNotes.join('\n')),
       });
 
       setSaving(false);
@@ -179,28 +193,28 @@ export default function Profile() {
                 <Textarea
                   label="Allergies"
                   value={form.allergies.join('\n')}
-                  onChange={(e) => update('allergies', toList(e.target.value))}
+                  onChange={(e) => update('allergies', toEditableItems(e.target.value))}
                   className="min-h-24"
                   placeholder={'Penicillin\nPeanuts'}
                 />
                 <Textarea
                   label="Conditions"
                   value={form.conditions.join('\n')}
-                  onChange={(e) => update('conditions', toList(e.target.value))}
+                  onChange={(e) => update('conditions', toEditableItems(e.target.value))}
                   className="min-h-24"
                   placeholder={'Asthma\nHypertension'}
                 />
                 <Textarea
                   label="Current medications"
                   value={form.medications.join('\n')}
-                  onChange={(e) => update('medications', toList(e.target.value))}
+                  onChange={(e) => update('medications', toEditableItems(e.target.value))}
                   className="min-h-24"
                   placeholder={'Salbutamol inhaler\nAmlodipine 5mg'}
                 />
                 <Textarea
                   label="Emergency notes"
                   value={form.emergencyNotes.join('\n')}
-                  onChange={(e) => update('emergencyNotes', toList(e.target.value))}
+                  onChange={(e) => update('emergencyNotes', toEditableItems(e.target.value))}
                   className="min-h-24"
                   placeholder={'Mum is contact: 07700 900123\nI am allergic to latex'}
                 />

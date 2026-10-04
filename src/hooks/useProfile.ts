@@ -131,15 +131,20 @@ export function useProfile(): UseProfileResult {
 /** Keeps the profiles row in step with the name shown in the navbar. */
 export function useSyncProfileName() {
   const { user } = useAuth();
-  const { saveProfile } = useProfile();
+  const { saveProfile, profile, loading } = useProfile();
 
-  const wantedName = user?.name;
+  const wantedName = user?.name?.trim();
   const userId = user?.id;
+  const storedName = profile.fullName?.trim();
 
   useEffect(() => {
     if (!userId || !wantedName) return;
+    // Only write when the row genuinely disagrees. Saving unconditionally would
+    // fire a database write on every render the effect happens to re-run.
+    if (loading) return;
+    if (storedName === wantedName) return;
     // The row is created by the database trigger, so this is a no-op if it is
     // not there yet; the Profile page is where names are actually edited.
     void saveProfile({ fullName: wantedName }).catch(() => undefined);
-  }, [userId, wantedName, saveProfile]);
+  }, [userId, wantedName, storedName, loading, saveProfile]);
 }
