@@ -662,7 +662,7 @@ begin
 
   if not can_manage_objects then
     raise warning
-      'This role cannot manage storage.objects (owner is %), so the four file policies were NOT created. Add them under Storage > Policies > reports, or run: grant supabase_storage_admin to postgres; then re-run this file.',
+      'This role cannot manage storage.objects (owner is %), so the four file policies were NOT created. supabase/storage-policies.sql has them ready to paste into Storage > Policies > reports.',
       objects_owner;
     return;
   end if;

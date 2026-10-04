@@ -266,9 +266,9 @@ async function seedPrivateData(client, userId, tag) {
       throw new Error(
         'The private "reports" bucket does not exist, so none of the file policies can be tested.\n' +
         'supabase/schema.sql creates it, but only if the role running it can write storage.buckets.\n' +
-        'Either create it by hand (Storage > New bucket, name "reports", Public OFF) or run\n' +
-        '  grant supabase_storage_admin to postgres;\n' +
-        'in the SQL Editor and then re-run supabase/schema.sql.',
+        'On a hosted project that role cannot, so create it by hand:\n' +
+        '  Storage > Buckets > New bucket, name "reports", Public bucket OFF\n' +
+        'then add the four file policies from supabase/storage-policies.sql.',
       )
     }
     fail('the report file', uploadError)
