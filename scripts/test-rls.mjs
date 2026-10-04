@@ -149,6 +149,14 @@ async function signIn(email, password, fullName) {
 
 const stamp = Date.now()
 
+// Supabase's validator rejects reserved domains such as example.test and
+// example.com, so the throwaway accounts need a domain that looks real. Nothing
+// is delivered to it: this only works with email confirmation switched off, and
+// with it off no mail is sent at all. Override with RLS_TEST_EMAIL_DOMAIN if
+// your project is stricter than the default.
+const emailDomain = env.RLS_TEST_EMAIL_DOMAIN || 'gmail.com'
+const emailFor = (who) => `rls-user-${who}-${stamp}@${emailDomain}`
+
 /**
  * Gives one account a full set of private records.
  *
@@ -167,7 +175,7 @@ async function seedPrivateData(client, userId, tag) {
   if (existing.error) fail('the profile', existing.error)
   const { error: profileError } = await client
     .from('profiles')
-    .update({ full_name: `Owner ${tag}`, email: `owner-${tag}@example.test` })
+    .update({ full_name: `Owner ${tag}`, email: `owner-${tag}@${emailDomain}` })
     .eq('id', userId)
   if (profileError) fail('the profile update', profileError)
 
@@ -389,8 +397,8 @@ async function checkStorage(actor, actorName, victim, victimName) {
 console.log(`\nTesting Row Level Security on ${url}`)
 
 const password = `RlsTest!${stamp}`
-const a = await signIn(`rls-user-a-${stamp}@example.test`, password, 'User A')
-const b = await signIn(`rls-user-b-${stamp}@example.test`, password, 'User B')
+const a = await signIn(emailFor('a'), password, 'User A')
+const b = await signIn(emailFor('b'), password, 'User B')
 
 if (!a.user || !b.user) {
   console.error('\nCould not sign in both test accounts.')
@@ -550,7 +558,7 @@ if (failed.length > 0) {
   for (const entry of failed) console.log(`  - ${entry.label}`)
 }
 
-console.log('\nThe rows belong to throwaway accounts (rls-user-*@example.test).')
+console.log(`\nThe rows belong to throwaway accounts (rls-user-*@${emailDomain}).`)
 console.log('Delete them from Authentication -> Users, which cascades to everything else.')
 
 process.exit(failed.length === 0 ? 0 : 1)
