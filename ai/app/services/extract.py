@@ -17,7 +17,11 @@ IMAGE_MIME_TYPES = {
     ".bmp": "image/bmp",
 }
 
-MAX_BYTES = 12 * 1024 * 1024
+# Vercel rejects any request body over 4.5 MB before it reaches the code, so
+# accepting more than this only produces a confusing 413 from the platform
+# instead of a clear message here. Anything larger has to go to a host that
+# allows bigger uploads.
+MAX_BYTES = 4 * 1024 * 1024
 
 TRANSCRIBE_PROMPT = """
 Transcribe this medical report image into plain text.

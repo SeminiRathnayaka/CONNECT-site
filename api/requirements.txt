@@ -1,0 +1,14 @@
+# Vercel installs these for the function in api/index.py.
+#
+# The list is the same as ai/requirements.txt. It is repeated because Vercel
+# resolves dependencies relative to the function's own directory, and it cannot
+# reach outside it. python-dotenv is included even though .env is not deployed,
+# because importing the settings must not fail when the file is absent.
+fastapi==0.115.6
+uvicorn==0.34.0
+httpx==0.28.1
+PyJWT==2.10.1
+python-dotenv==1.1.0
+python-multipart==0.0.20
+google-generativeai==0.8.6
+pypdf==5.1.0
